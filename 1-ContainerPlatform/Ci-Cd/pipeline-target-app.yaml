@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipelines-demo
+  labels:
+    app: pipelines-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pipelines-demo
+  template:
+    metadata:
+      labels:
+        app: pipelines-demo
+    spec:
+      containers:
+        - name: app
+          # Pipeline'ın push edeceği imaj ile aynı pull spec — ilk pipeline
+          # çalışana kadar bu imaj mevcut olmayacağı için pod ImagePullBackOff
+          # durumunda bekler, bu normaldir.
+          image: image-registry.openshift-image-registry.svc:5000/REPLACE_ME_NAMESPACE/pipelines-demo:latest
+          imagePullPolicy: Always   # "latest" tag her build'de değiştiği için şart
+          ports:
+            - name: http
+              containerPort: 9000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipelines-demo
+  labels:
+    app: pipelines-demo
+spec:
+  selector:
+    app: pipelines-demo
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: pipelines-demo
+  labels:
+    app: pipelines-demo
+spec:
+  to:
+    kind: Service
+    name: pipelines-demo
+  port:
+    targetPort: http

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tb-ocp-poc
+  labels:
+    app.kubernetes.io/part-of: tb-ocp-poc
+    environment: poc
+  annotations:
+    openshift.io/display-name: "TB OCP POC"
+    openshift.io/description: "Ticaret Bakanligi OpenShift POC calismalari icin namespace/proje"

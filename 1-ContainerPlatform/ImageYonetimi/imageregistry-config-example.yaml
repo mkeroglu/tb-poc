@@ -1,0 +1,18 @@
+# REFERANS AMAÇLIDIR: "configs.imageregistry.operator.openshift.io/cluster" cluster genelinde
+# TEK (singleton) bir kaynaktır ve zaten mevcuttur. Bu dosyayı doğrudan "oc apply -f" ile
+# uygulamak, cluster'ın MEVCUT registry yapılandırmasının üzerine yazar ve tüm namespace'leri
+# etkiler. Uygulamadan önce mutlaka güncel durumu kontrol edin:
+#   oc get configs.imageregistry.operator.openshift.io cluster -o yaml
+# Değişiklik yapmak için tercihen küçük, hedefli "oc patch" komutları kullanın (README'ye bakın).
+apiVersion: imageregistry.operator.openshift.io/v1
+kind: Config
+metadata:
+  name: cluster
+spec:
+  managementState: Managed
+  defaultRoute: true
+  replicas: 1
+  rolloutStrategy: RollingUpdate
+  storage:
+    pvc:
+      claim: ""   # boş bırakılırsa operator, varsayılan StorageClass'tan otomatik bir PVC oluşturur

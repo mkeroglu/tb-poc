@@ -1,0 +1,15 @@
+# REFERANS AMAÇLIDIR: Bu operatör cluster genelinde (tüm namespace'leri) etkileyen
+# bir kaynaktır. Uygulamadan önce operatörün zaten kurulu olup olmadığını kontrol edin:
+#   oc get csv -A | grep -i gitops
+#   oc get ns openshift-gitops openshift-gitops-operator
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-gitops-operator
+  namespace: openshift-operators
+spec:
+  channel: latest
+  name: openshift-gitops-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

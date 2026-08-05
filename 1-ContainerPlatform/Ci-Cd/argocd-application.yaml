@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitops-demo-dev
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: REPLACE_ME_GIT_REPO_URL   # örn. git@bitbucket.org:org/tb-poc.git ya da https://.../tb-poc.git
+    targetRevision: main
+    path: 1-ContainerPlatform/Ci-Cd/app/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tb-ocp-poc-gitops-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
