@@ -8,3 +8,5 @@ spec:
     name: gitops-demo
   port:
     targetPort: http
+  tls:
+    termination: edge
