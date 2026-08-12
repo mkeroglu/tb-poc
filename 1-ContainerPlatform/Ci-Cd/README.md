@@ -4,8 +4,8 @@ Bu bölümde OpenShift üzerinde CI/CD ve deployment stratejileri ele alınacakt
 
 - [x] GitOps deployment
 - [x] Pipeline otomasyonu
-- [ ] Blue/Green deployment
-- [ ] Canary deployment
+- [x] Blue/Green deployment
+- [x] Canary deployment
 
 ---
 
@@ -336,3 +336,15 @@ oc delete pipelinerun -l tekton.dev/pipeline=build-and-deploy
 oc delete -f pipeline-target-app.yaml
 oc delete -f pipeline-build-deploy.yaml
 ```
+
+---
+
+## Blue/Green Deployment
+
+Ayrı bir dokümana taşındı — bkz. **[BlueGreenDeployment/README.md](../../BlueGreenDeployment/README.md)** (kavram, YAML'lar, canlı test çıktıları ve router gecikmesi tuzağı orada).
+
+---
+
+## Canary Deployment
+
+Ayrı bir dokümana taşındı — bkz. **[CanaryDeployment/README.md](../../CanaryDeployment/README.md)** (kavram, Route `alternateBackends`/`weight` yapılandırması, `%90/10 → %50/50 → %100/0` kademeli geçişin gerçek ölçülmüş istek dağılımlarıyla canlı testi).
