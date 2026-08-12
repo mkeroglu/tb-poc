@@ -276,6 +276,22 @@ oc apply -f pipeline-target-app.yaml
 
 > Container'da `imagePullPolicy: Always` kullanıldı çünkü imaj her build'de aynı `:latest` tag'ini kullanıyor — bu olmadan node, önceden çektiği (eski) imajı önbellekten kullanmaya devam edebilir.
 
+### Yeni namespace'te ilk çalıştırmadan önce: `pipelines-scc` kontrolü
+
+**Yepyeni bir namespace'te** Pipeline'ı oluşturduktan hemen sonra PipelineRun'ı tetiklerseniz, `fetch-source` adımı `Permission denied` (`/workspace/output/.git`) veya `build-and-push` adımı `.docker`/`.config` yazma hatasıyla başarısız olabilir. Sebep: `git-clone` ve `buildah` Task'ları `pipelines-scc` SCC'siyle çalışmak üzere tasarlanmış, ama OpenShift Pipelines operatörü bu namespace için gereken `pipeline` ServiceAccount'unu ve `pipelines-scc-rolebinding`'i **Pipeline kaynağı oluşturulduktan birkaç saniye sonra** otomatik olarak provision ediyor — bu süre dolmadan PipelineRun tetiklenirse pod'lar daha kısıtlayıcı bir SCC'ye (`restricted-v2`) düşüyor ve bu hataları veriyor.
+
+`oc apply -f pipeline-build-deploy.yaml` sonrasında, PipelineRun'ı tetiklemeden önce binding'in oluştuğunu doğrulayın:
+
+```bash
+oc get rolebinding pipelines-scc-rolebinding -n <namespace>
+```
+
+Komut `NotFound` dönerse birkaç saniye bekleyip tekrar deneyin. Binding görünmüyorsa veya sorun devam ediyorsa, `pipeline` ServiceAccount'una `pipelines-scc`'yi elle bağlayarak da çözebilirsiniz:
+
+```bash
+oc adm policy add-scc-to-user pipelines-scc -z pipeline -n <namespace>
+```
+
 ### PipelineRun ile çalıştırma (CLI)
 
 `pipelinerun.yaml` — `image` alanındaki namespace'i kendi namespace'inizle değiştirip:

@@ -1,6 +1,6 @@
 # Kubernetes / OpenShift NetworkPolicy Demo Rehberi
 
-Bu doküman, müşteride canlı ortamda (pod içinde, `oc` ile) NetworkPolicy anlatımı yapmak için hazırlanmıştır. Tüm komutlar ve YAML'lar **gerçek bir OpenShift cluster'ında (4.22, OVNKubernetes) uçtan uca test edilmiş**, çıktılar aşağıda gösterildiği gibi doğrulanmıştır. 4 namespace kullanılıyor: `frontend`, `backend`, `other`, `monitoring`.
+Bu doküman, canlı ortamda (pod içinde, `oc` ile) NetworkPolicy anlatımı yapmak için hazırlanmıştır. Tüm komutlar ve YAML'lar **gerçek bir OpenShift cluster'ında (4.22, OVNKubernetes) uçtan uca test edilmiş**, çıktılar aşağıda gösterildiği gibi doğrulanmıştır. 4 namespace kullanılıyor: `frontend`, `backend`, `other`, `monitoring`.
 
 Senaryo sırası:
 
@@ -131,7 +131,7 @@ wget: download timed out
 wget: download timed out
 ```
 
-Müşteriye vurgulanacak nokta: `podSelector: {}` + boş `ingress` alanı → o namespace'teki tüm pod'lar için **her yönden** gelen trafik reddedilir.
+Vurgulanacak nokta: `podSelector: {}` + boş `ingress` alanı → o namespace'teki tüm pod'lar için **her yönden** gelen trafik reddedilir.
 
 ---
 
@@ -230,7 +230,7 @@ allow-from-monitoring-namespace   <none>         ...
 default-deny-ingress              <none>         ...
 ```
 
-Bu, müşteriye "NetworkPolicy'ler birbirini ezmez, birleşir (OR)" mesajını canlı olarak kanıtlayan en net an: `frontend` ve `monitoring` giriyor, `other` hâlâ dışarıda.
+Bu, "NetworkPolicy'ler birbirini ezmez, birleşir (OR)" mesajını canlı olarak kanıtlayan en net an: `frontend` ve `monitoring` giriyor, `other` hâlâ dışarıda.
 
 ---
 
