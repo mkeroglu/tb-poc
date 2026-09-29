@@ -1,6 +1,6 @@
 # Multus CNI — Macvlan Demo Rehberi
 
-Bu doküman, bir pod'a **ikinci bir ağ arayüzü** (gerçek LAN'dan, node'un fiziksel ağıyla aynı segmentten bir IP alan) eklemek için Multus CNI + macvlan kullanımını anlatır. Tüm adımlar bu repodaki cluster'da (OpenShift 4.22, **OVNKubernetes**, node'lar VMware VM) **`tb-ocp-poc` namespace'inde, gerçek LAN'da (`10.134.151.0/24`) uçtan uca canlı test edilmiştir** — kullanılan IP bloğu (`10.134.151.241-245`) canlıya geçmeden önce ARP tablosu + `arping` ile taranıp boş olduğu doğrulanmıştır.
+Bu doküman, bir pod'a **ikinci bir ağ arayüzü** (gerçek LAN'dan, node'un fiziksel ağıyla aynı segmentten bir IP alan) eklemek için Multus CNI + macvlan kullanımını anlatır. Tüm adımlar bu repodaki cluster'da (OpenShift 4.22, **OVNKubernetes**, node'lar VMware VM) **`trt-ocp-poc` namespace'inde, gerçek LAN'da (`10.134.151.0/24`) uçtan uca canlı test edilmiştir** — kullanılan IP bloğu (`10.134.151.241-245`) canlıya geçmeden önce ARP tablosu + `arping` ile taranıp boş olduğu doğrulanmıştır.
 
 Senaryo sırası:
 
@@ -92,7 +92,7 @@ Doldurulması gerekenler (ağ ekibinden teyit alın — **gerçek LAN'da kullan�
 
 | Placeholder | Bu POC'de kullanılan değer |
 |---|---|
-| `REPLACE_ME_NAMESPACE` | `tb-ocp-poc` |
+| `REPLACE_ME_NAMESPACE` | `trt-ocp-poc` |
 | `REPLACE_ME_CIDR` | `10.134.151.0/24` |
 | `REPLACE_ME_IP_START` / `REPLACE_ME_IP_END` | `10.134.151.241` – `10.134.151.245` |
 | `REPLACE_ME_GATEWAY` | `10.134.151.1` |
@@ -150,7 +150,7 @@ oc wait --for=condition=Ready pod/macvlan-test -n REPLACE_ME_NAMESPACE --timeout
 **a) Pod'a atanan ek arayüz ve IP:**
 
 ```bash
-oc exec -n tb-ocp-poc macvlan-test -- ip addr show net1
+oc exec -n trt-ocp-poc macvlan-test -- ip addr show net1
 ```
 
 ✅ **Gerçek çıktı:**
@@ -166,9 +166,9 @@ oc exec -n tb-ocp-poc macvlan-test -- ip addr show net1
 **b) Aynı NAD'a bağlı iki pod'un (aynı node üzerinde) macvlan üzerinden birbirine ulaşması:**
 
 ```bash
-oc exec -n tb-ocp-poc macvlan-test-2 -- sh -c "nc -l -p 5000 > /tmp/out.txt &"
-oc exec -n tb-ocp-poc macvlan-test   -- sh -c "echo hello | nc -w3 10.134.151.242 5000"
-oc exec -n tb-ocp-poc macvlan-test-2 -- cat /tmp/out.txt
+oc exec -n trt-ocp-poc macvlan-test-2 -- sh -c "nc -l -p 5000 > /tmp/out.txt &"
+oc exec -n trt-ocp-poc macvlan-test   -- sh -c "echo hello | nc -w3 10.134.151.242 5000"
+oc exec -n trt-ocp-poc macvlan-test-2 -- cat /tmp/out.txt
 ```
 
 ✅ **Gerçek çıktı:** `hello` — pod1 → pod2 macvlan üzerinden (`10.134.151.241` → `10.134.151.242`) TCP ile başarıyla iletişim kurdu.
@@ -207,7 +207,7 @@ oc exec -n tb-ocp-poc macvlan-test-2 -- cat /tmp/out.txt
 ## 7. Temizlik
 
 ```bash
-oc delete pod macvlan-test macvlan-test-2 -n tb-ocp-poc
+oc delete pod macvlan-test macvlan-test-2 -n trt-ocp-poc
 oc delete -f macvlan-nad.yaml
 ```
 

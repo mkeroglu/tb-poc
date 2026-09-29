@@ -1,6 +1,6 @@
 # Uygulama Senaryoları
 
-Bu bölümde OpenShift üzerinde farklı uygulama karakteristiklerinin (stateless, stateful, API/microservice) nasıl modellendiği ele alınacaktır. Tüm örnekler `tb-ocp-poc` namespace'inde çalışır (bkz. `../ContainerYonetimi/namespace.yaml`).
+Bu bölümde OpenShift üzerinde farklı uygulama karakteristiklerinin (stateless, stateful, API/microservice) nasıl modellendiği ele alınacaktır. Tüm örnekler `trt-ocp-poc` namespace'inde çalışır (bkz. `../ContainerYonetimi/namespace.yaml`).
 
 - [x] Stateless web app
 - [x] Stateful database app
@@ -86,7 +86,7 @@ Bu karşılaştırmayı bir sonraki bölümde (**Stateful database app**) somut 
 - Pod adları sıralı ve sabittir (`postgres-0`, `postgres-1`, ...) — silinip yeniden oluşsa bile **aynı isimle** geri gelir.
 - Her pod, `volumeClaimTemplates` üzerinden **kendi** PVC'sine sahiptir (`data-postgres-0` gibi); pod silinse de bu PVC (ve içindeki veri) silinmez, yeni pod aynı isimle geldiğinde **aynı PVC'ye** yeniden bağlanır.
 - Pod oluşturma/silme **sıralıdır** (0 → 1 → 2 sırayla oluşur, tersi sırayla silinir) — Deployment'taki gibi paralel/sırasız değildir.
-- Stabil ağ kimliği için genellikle bir **headless Service** (`clusterIP: None`) kullanılır; bu sayede her pod'a `postgres-0.postgres.tb-ocp-poc.svc.cluster.local` gibi sabit bir DNS adından ulaşılabilir.
+- Stabil ağ kimliği için genellikle bir **headless Service** (`clusterIP: None`) kullanılır; bu sayede her pod'a `postgres-0.postgres.trt-ocp-poc.svc.cluster.local` gibi sabit bir DNS adından ulaşılabilir.
 
 ### Örnek: PostgreSQL
 
@@ -101,7 +101,7 @@ Bu karşılaştırmayı bir sonraki bölümde (**Stateful database app**) somut 
 ### `oc apply` ile oluşturma
 
 ```bash
-oc project tb-ocp-poc
+oc project trt-ocp-poc
 oc apply -f postgres.yaml
 oc get pods -l app=postgres -w
 oc get pvc
@@ -129,7 +129,7 @@ oc create service clusterip postgres --tcp=5432:5432 --clusterip=None
 oc exec -it postgres-0 -- psql -U appuser -d appdb -c \
   "CREATE TABLE notes (id serial PRIMARY KEY, message text, created_at timestamptz DEFAULT now());"
 oc exec -it postgres-0 -- psql -U appuser -d appdb -c \
-  "INSERT INTO notes (message) VALUES ('Merhaba OpenShift POC'), ('Ticaret Bakanlığı');"
+  "INSERT INTO notes (message) VALUES ('Merhaba OpenShift POC'), ('TRT');"
 oc exec -it postgres-0 -- psql -U appuser -d appdb -c "SELECT * FROM notes;"
 ```
 

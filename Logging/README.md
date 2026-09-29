@@ -1,6 +1,6 @@
 # OpenShift Logging + LokiStack (ODF/S3) Kurulum Rehberi
 
-Bu doküman, **OpenShift Logging (Cluster Logging Operator)** + **Loki Operator (LokiStack)** kurup, **application** ve **audit** loglarını Loki'ye yönlendirmeyi anlatır. Depolama (S3) için ayrı bir external S3 yerine cluster'da zaten kurulu olan **ODF (OpenShift Data Foundation)**'ın S3-uyumlu object storage'ı kullanılmıştır. Tüm adımlar bu repodaki cluster'da (OpenShift 4.22) **uçtan uca canlı test edilmiştir** — `tb-ocp-poc` namespace'ine test pod'u ile log basılmış, hem application hem audit tenant'ından gerçekten Loki'ye ulaştığı LokiStack API'siyle doğrulanmıştır.
+Bu doküman, **OpenShift Logging (Cluster Logging Operator)** + **Loki Operator (LokiStack)** kurup, **application** ve **audit** loglarını Loki'ye yönlendirmeyi anlatır. Depolama (S3) için ayrı bir external S3 yerine cluster'da zaten kurulu olan **ODF (OpenShift Data Foundation)**'ın S3-uyumlu object storage'ı kullanılmıştır. Tüm adımlar bu repodaki cluster'da (OpenShift 4.22) **uçtan uca canlı test edilmiştir** — `trt-ocp-poc` namespace'ine test pod'u ile log basılmış, hem application hem audit tenant'ından gerçekten Loki'ye ulaştığı LokiStack API'siyle doğrulanmıştır.
 
 Senaryo sırası:
 
@@ -303,7 +303,7 @@ oc get pods -n openshift-logging -l app.kubernetes.io/component=collector
 **a) Test için log üretimi:**
 
 ```bash
-oc run log-test-emitter -n tb-ocp-poc --image=busybox:1.36 --restart=Never -- \
+oc run log-test-emitter -n trt-ocp-poc --image=busybox:1.36 --restart=Never -- \
   sh -c 'for i in $(seq 1 20); do echo "LOKI_DEMO_MARKER_line_$i $(date)"; sleep 1; done; sleep 180'
 ```
 
@@ -349,13 +349,13 @@ ROUTE=$(oc get route logging-loki -n openshift-logging -o jsonpath='https://{.sp
 
 ```bash
 curl -sk -H "Authorization: Bearer $TOKEN" \
-  --data-urlencode 'query={k8s_namespace_name="tb-ocp-poc"} |= "LOKI_DEMO_MARKER"' \
+  --data-urlencode 'query={k8s_namespace_name="trt-ocp-poc"} |= "LOKI_DEMO_MARKER"' \
   --data-urlencode "start=$(($(date +%s)-300))000000000" \
   --data-urlencode "end=$(date +%s)000000000" \
   "$ROUTE/api/logs/v1/application/loki/api/v1/query_range"
 ```
 
-✅ **Gerçek çıktı:** `"status":"success"`, stream `k8s_namespace_name=tb-ocp-poc, k8s_pod_name=log-test-emitter`, `values` içinde `LOKI_DEMO_MARKER_line_1..20` satırlarının tamamı, tam JSON log kaydı (`kubernetes.*`, `@timestamp`, `message` alanlarıyla).
+✅ **Gerçek çıktı:** `"status":"success"`, stream `k8s_namespace_name=trt-ocp-poc, k8s_pod_name=log-test-emitter`, `values` içinde `LOKI_DEMO_MARKER_line_1..20` satırlarının tamamı, tam JSON log kaydı (`kubernetes.*`, `@timestamp`, `message` alanlarıyla).
 
 **d) Audit tenant'ından sorgu:**
 
@@ -396,7 +396,7 @@ application (limit: 4194304 bytes/sec) ..." org_id=application
 `spec.limits.global.ingestion.ingestionRate` değerini (bu POC'de `40` MB/sn'ye) yükseltmek hatayı durdurdu, ama tek-repliklı `1x.demo`'nun gerçek üretim hacmini kaldırması yine de garanti değil. **İki pratik seçenek:**
 
 - **Üretimde:** LokiStack boyutunu gerçek log hacmine göre seçin (`1x.small`/`1x.medium`/`1x.large` — Red Hat dokümantasyonundaki ingestion-rate tablosuna bakın), `1x.demo`'yu sadece gerçek demo/test için kullanın.
-- **Kapsamı daraltmak isterseniz:** `spec.inputs[].application.includes` ile sadece ilgilendiğiniz namespace'leri toplayın (bu POC'nin canlı testinde yapılan budur — `includes: [{namespace: tb-ocp-poc}]` — hem ingestion limitine takılmadı hem de diğer tenant'ların log hacmini gereksiz yere Loki'ye çekmedi):
+- **Kapsamı daraltmak isterseniz:** `spec.inputs[].application.includes` ile sadece ilgilendiğiniz namespace'leri toplayın (bu POC'nin canlı testinde yapılan budur — `includes: [{namespace: trt-ocp-poc}]` — hem ingestion limitine takılmadı hem de diğer tenant'ların log hacmini gereksiz yere Loki'ye çekmedi):
 
 ```yaml
 inputs:
@@ -404,7 +404,7 @@ inputs:
     type: application
     application:
       includes:
-        - namespace: tb-ocp-poc
+        - namespace: trt-ocp-poc
 ```
 
 ---

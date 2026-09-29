@@ -30,13 +30,13 @@ Project, OpenShift'in Kubernetes Namespace kavramını genişleterek üzerine ek
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: tb-ocp-poc
+  name: trt-ocp-poc
   labels:
-    app.kubernetes.io/part-of: tb-ocp-poc
+    app.kubernetes.io/part-of: trt-ocp-poc
     environment: poc
   annotations:
-    openshift.io/display-name: "TB OCP POC"
-    openshift.io/description: "Ticaret Bakanligi OpenShift POC calismalari icin namespace/proje"
+    openshift.io/display-name: "TRT OCP POC"
+    openshift.io/description: "TRT OpenShift POC calismalari icin namespace/proje"
 ```
 
 ### YAML nasıl apply edilir?
@@ -46,9 +46,9 @@ metadata:
 oc apply -f namespace.yaml
 
 # Doğrulama
-oc get namespace tb-ocp-poc
-oc get project tb-ocp-poc
-oc describe project tb-ocp-poc
+oc get namespace trt-ocp-poc
+oc get project trt-ocp-poc
+oc describe project trt-ocp-poc
 ```
 
 `oc apply` deklaratif bir komuttur: YAML içindeki tanım cluster'daki mevcut durumla karşılaştırılır, kaynak yoksa oluşturulur, varsa fark kadar güncellenir. Bu nedenle tekrar tekrar çalıştırmak güvenlidir (idempotent).
@@ -58,15 +58,15 @@ oc describe project tb-ocp-poc
 YAML dosyasına gerek kalmadan, doğrudan komut satırından yeni bir proje oluşturmak için:
 
 ```bash
-oc new-project tb-ocp-poc \
-  --display-name="TB OCP POC" \
-  --description="Ticaret Bakanligi OpenShift POC calismalari icin namespace/proje"
+oc new-project trt-ocp-poc \
+  --display-name="TRT OCP POC" \
+  --description="TRT OpenShift POC calismalari icin namespace/proje"
 ```
 
 Bu komut hem Namespace/Project'i oluşturur hem de çalıştığınız context'i (`oc project`) otomatik olarak yeni oluşturulan projeye geçirir. Var olan bir projeye geçmek için:
 
 ```bash
-oc project tb-ocp-poc
+oc project trt-ocp-poc
 ```
 
 ### GUI (Web Console) üzerinden proje nasıl oluşturulur?
@@ -76,9 +76,9 @@ oc project tb-ocp-poc
 3. Sol menüden **Home > Projects** sekmesine gidin.
 4. Sağ üstteki **Create Project** butonuna tıklayın.
 5. Açılan formda:
-   - **Name**: `tb-ocp-poc`
-   - **Display Name**: `TB OCP POC`
-   - **Description**: `Ticaret Bakanligi OpenShift POC calismalari icin namespace/proje`
+   - **Name**: `trt-ocp-poc`
+   - **Display Name**: `TRT OCP POC`
+   - **Description**: `TRT OpenShift POC calismalari icin namespace/proje`
 6. **Create** butonuna basarak projeyi oluşturun.
 7. Oluşturduktan sonra üst menüden proje seçici (project selector) ile bu proje arasında geçiş yapabilirsiniz.
 
@@ -88,10 +88,10 @@ oc project tb-ocp-poc
 
 ```bash
 # Project olarak silme (önerilen, OpenShift'e özgü kaynak)
-oc delete project tb-ocp-poc
+oc delete project trt-ocp-poc
 
 # veya düz Namespace olarak silme
-oc delete namespace tb-ocp-poc
+oc delete namespace trt-ocp-poc
 
 # YAML dosyası üzerinden silme
 oc delete -f namespace.yaml
@@ -102,15 +102,15 @@ oc delete -f namespace.yaml
 **GUI ile:**
 
 1. Web Console'da **Home > Projects** sekmesine gidin.
-2. Silinecek projenin (`tb-ocp-poc`) satırındaki `⋮` (üç nokta) menüsüne tıklayın.
+2. Silinecek projenin (`trt-ocp-poc`) satırındaki `⋮` (üç nokta) menüsüne tıklayın.
 3. **Delete Project** seçeneğini seçin.
-4. Açılan onay penceresine proje adını (`tb-ocp-poc`) yazarak silme işlemini onaylayın.
+4. Açılan onay penceresine proje adını (`trt-ocp-poc`) yazarak silme işlemini onaylayın.
 
 ---
 
 ## Deployment rollout/rollback
 
-Bu bölümde `nginx.yaml` dosyası ile Deployment, ConfigMap, Secret, Service ve Route kaynaklarından oluşan basit bir Nginx uygulaması `tb-ocp-poc` namespace'ine kurulacak. Ardından bu Deployment üzerinde `oc rollout` komutlarıyla rollout/rollback senaryosu gösterilecektir.
+Bu bölümde `nginx.yaml` dosyası ile Deployment, ConfigMap, Secret, Service ve Route kaynaklarından oluşan basit bir Nginx uygulaması `trt-ocp-poc` namespace'ine kurulacak. Ardından bu Deployment üzerinde `oc rollout` komutlarıyla rollout/rollback senaryosu gösterilecektir.
 
 ### nginx.yaml içeriği
 
@@ -127,7 +127,7 @@ Bu bölümde `nginx.yaml` dosyası ile Deployment, ConfigMap, Secret, Service ve
 ### `oc apply` ile oluşturma
 
 ```bash
-oc project tb-ocp-poc   # doğru namespace'te olduğumuzdan emin olalım
+oc project trt-ocp-poc   # doğru namespace'te olduğumuzdan emin olalım
 oc apply -f nginx.yaml
 ```
 
@@ -259,7 +259,7 @@ nginx örneğindeki gibi CPU tüketimini "doğal" bir istekle tetiklemeye çalı
 > **SCC / port 80 notu:** `hpa-example` imajı klasik bir Apache/root imajıdır ve OpenShift'in varsayılan **restricted** SCC'si altında (rastgele UID, `NET_BIND_SERVICE` capability'si yok) port 80'e bind olamayabilir ya da log/pid dizinlerine yazamayabilir. Bunu çözmek için bu namespace'in `default` service account'una `anyuid` SCC'sini vermeniz gerekebilir (cluster-admin yetkisi ister):
 >
 > ```bash
-> oc adm policy add-scc-to-user anyuid -z default -n tb-ocp-poc
+> oc adm policy add-scc-to-user anyuid -z default -n trt-ocp-poc
 > ```
 >
 > Bu, sadece demo/POC amaçlıdır; gerçek projelerde imajın OpenShift-uyumlu (arbitrary UID'ye hazır) şekilde yeniden derlenmesi tercih edilir — bunu ileride **ImageYonetimi/Ci-Cd** bölümlerinde ele alacağız.
@@ -267,11 +267,11 @@ nginx örneğindeki gibi CPU tüketimini "doğal" bir istekle tetiklemeye çalı
 ### `oc apply` ile oluşturma
 
 ```bash
-oc project tb-ocp-poc
+oc project trt-ocp-poc
 oc apply -f hpa.yaml
 
 # gerekiyorsa (bkz. yukarıdaki SCC notu):
-oc adm policy add-scc-to-user anyuid -z default -n tb-ocp-poc
+oc adm policy add-scc-to-user anyuid -z default -n trt-ocp-poc
 oc rollout restart deployment/php-apache
 ```
 
@@ -364,7 +364,7 @@ ResourceQuota, bir namespace içindeki **toplam** kaynak tüketimini (CPU, memor
 
 > **Önemli:** Bir ResourceQuota'da `requests.cpu`/`requests.memory`/`limits.cpu`/`limits.memory` tanımlıysa, o namespace'teki **her** pod artık bu alanları açıkça belirtmek zorundadır; aksi halde pod oluşturma isteği "must specify limits.cpu" gibi bir hatayla reddedilir. Bu yüzden ResourceQuota, aşağıdaki **LimitRange** ile birlikte kullanılır: LimitRange, değer belirtilmeyen container'lara otomatik varsayılan request/limit atayarak bu zorunluluğu kullanıcıdan gizler.
 
-`resourcequota.yaml` içeriği — `tb-ocp-poc` namespace'i için:
+`resourcequota.yaml` içeriği — `trt-ocp-poc` namespace'i için:
 
 | Alan | Değer | Açıklama |
 |---|---|---|
@@ -378,9 +378,9 @@ ResourceQuota, bir namespace içindeki **toplam** kaynak tüketimini (CPU, memor
 ### `oc apply` ile oluşturma
 
 ```bash
-oc project tb-ocp-poc
+oc project trt-ocp-poc
 oc apply -f resourcequota.yaml
-oc describe resourcequota tb-ocp-poc-quota
+oc describe resourcequota trt-ocp-poc-quota
 ```
 
 Bu noktada, önceki bölümlerde oluşturduğumuz `nginx` (2 replika, requests 50m/64Mi, limits 200m/128Mi) ve `php-apache` (1 replika, requests 200m/128Mi, limits 500m/256Mi) deployment'ları zaten çalışıyorsa `oc describe resourcequota` çıktısında şu **Used** değerlerini görürsünüz — hepsi hâlâ hard limitlerin altında olduğu için mevcut pod'lar etkilenmez:
@@ -398,7 +398,7 @@ pods                3      10
 ### İmperative eşdeğer: `oc create quota`
 
 ```bash
-oc create quota tb-ocp-poc-quota \
+oc create quota trt-ocp-poc-quota \
   --hard=requests.cpu=500m,requests.memory=512Mi,limits.cpu=1,limits.memory=1Gi,pods=10
 ```
 
@@ -418,21 +418,21 @@ oc describe replicaset <yeni-nginx-replicaset-adı>
 
 ```
 Warning  FailedCreate  ...  Error creating: pods "nginx-xxxxxxxxxx-yyyyy" is forbidden:
-exceeded quota: tb-ocp-poc-quota, requested: limits.cpu=200m,
+exceeded quota: trt-ocp-poc-quota, requested: limits.cpu=200m,
 used: limits.cpu=900m, limited: limits.cpu=1
 ```
 
 Deployment, eski (sağlıklı) ReplicaSet'i koruyarak çalışmaya devam eder — 3. pod hiç oluşturulamadığı için servis kesintisi yaşanmaz. Doğrulama ve geri alma:
 
 ```bash
-oc describe resourcequota tb-ocp-poc-quota   # Used değişmediğini gösterir
+oc describe resourcequota trt-ocp-poc-quota   # Used değişmediğini gösterir
 oc scale deployment/nginx --replicas=2       # eski duruma dön
 ```
 
 ### ResourceQuota nasıl silinir?
 
 ```bash
-oc delete resourcequota tb-ocp-poc-quota
+oc delete resourcequota trt-ocp-poc-quota
 # veya
 oc delete -f resourcequota.yaml
 ```
@@ -445,7 +445,7 @@ GUI'de: **Administrator** görünümü → **Administration > ResourceQuotas** �
 
 LimitRange, ResourceQuota'nın aksine **tek tek** Pod/Container/PVC seviyesinde sınır koyar: bir container'ın alabileceği minimum/maksimum CPU-memory değerlerini, ve değer belirtilmediğinde uygulanacak **varsayılan** (`default`) ve **varsayılan request** (`defaultRequest`) değerlerini tanımlar.
 
-`limitrange.yaml` içeriği — `tb-ocp-poc-limits`:
+`limitrange.yaml` içeriği — `trt-ocp-poc-limits`:
 
 | Kapsam | Alan | Değer |
 |---|---|---|
@@ -460,7 +460,7 @@ LimitRange, ResourceQuota'nın aksine **tek tek** Pod/Container/PVC seviyesinde 
 
 ```bash
 oc apply -f limitrange.yaml
-oc describe limitrange tb-ocp-poc-limits
+oc describe limitrange trt-ocp-poc-limits
 ```
 
 > **İmperative eşdeğer yok:** `oc create`/`kubectl create` altında `configmap`, `secret`, `quota` gibi kısayolların aksine **LimitRange için imperative bir alt komut bulunmaz**. LimitRange yalnızca `oc apply -f` (veya `oc create -f`) ile bir YAML/JSON manifestosu üzerinden oluşturulabilir.
@@ -520,7 +520,7 @@ oc set resources deployment/nginx -c nginx --requests=cpu=10m
 ### LimitRange nasıl silinir?
 
 ```bash
-oc delete limitrange tb-ocp-poc-limits
+oc delete limitrange trt-ocp-poc-limits
 # veya
 oc delete -f limitrange.yaml
 ```

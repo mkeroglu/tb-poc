@@ -95,7 +95,7 @@ spec:
     path: 1-ContainerPlatform/Ci-Cd/app/overlays/dev
   destination:
     server: https://kubernetes.default.svc
-    namespace: tb-ocp-poc-gitops-dev
+    namespace: trt-ocp-poc-gitops-dev
   syncPolicy:
     automated:
       prune: true
@@ -117,7 +117,7 @@ oc get applications.argoproj.io -n openshift-gitops
 1. Argo CD UI ana sayfasında **+ NEW APP** butonuna tıklayın.
 2. **GENERAL**: Application Name, Project (`default`), Sync Policy (`Automatic` veya `Manual`).
 3. **SOURCE**: az önce eklediğiniz Repository URL'i seçin, Revision (örn. `main`), Path (örn. `1-ContainerPlatform/Ci-Cd/app/overlays/dev`).
-4. **DESTINATION**: Cluster URL (`https://kubernetes.default.svc` — aynı cluster), Namespace (örn. `tb-ocp-poc-gitops-dev`).
+4. **DESTINATION**: Cluster URL (`https://kubernetes.default.svc` — aynı cluster), Namespace (örn. `trt-ocp-poc-gitops-dev`).
 5. Kustomize path'i otomatik algılanır (ekstra bir alan gerekmez).
 6. **CREATE** ile Application'ı oluşturun; ardından **SYNC** butonuna basarak ilk senkronizasyonu tetikleyin (Automatic policy seçtiyseniz bu otomatik olur).
 
@@ -179,7 +179,7 @@ oc get applications.argoproj.io gitops-demo-dev -n openshift-gitops -o jsonpath=
 
 ```bash
 oc delete applications.argoproj.io gitops-demo-dev -n openshift-gitops
-oc delete namespace tb-ocp-poc-gitops-dev tb-ocp-poc-gitops-prod --ignore-not-found
+oc delete namespace trt-ocp-poc-gitops-dev trt-ocp-poc-gitops-prod --ignore-not-found
 ```
 
 ## Pipeline Otomasyonu

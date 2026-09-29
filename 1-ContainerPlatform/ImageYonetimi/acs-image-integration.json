@@ -1,5 +1,5 @@
 {
-  "name": "tb-ocp-poc Internal Registry",
+  "name": "trt-ocp-poc Internal Registry",
   "type": "docker",
   "categories": ["REGISTRY"],
   "docker": {

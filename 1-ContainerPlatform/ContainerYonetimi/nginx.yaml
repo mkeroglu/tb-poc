@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: nginx-conf
-  namespace: tb-ocp-poc
+  namespace: trt-ocp-poc
   labels:
     app: nginx
 type: Opaque
@@ -22,14 +22,14 @@ stringData:
             root   /usr/share/nginx/html;
         }
 
-        add_header X-Served-By "tb-ocp-poc-nginx" always;
+        add_header X-Served-By "trt-ocp-poc-nginx" always;
     }
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: nginx-index-html
-  namespace: tb-ocp-poc
+  namespace: trt-ocp-poc
   labels:
     app: nginx
 data:
@@ -38,11 +38,11 @@ data:
     <html lang="tr">
     <head>
       <meta charset="UTF-8">
-      <title>TB OCP POC - Nginx</title>
+      <title>TRT OCP POC - Nginx</title>
     </head>
     <body style="font-family: sans-serif; text-align: center; margin-top: 10%;">
-      <h1>Ticaret Bakanlığı OpenShift POC</h1>
-      <p>Bu sayfa <code>tb-ocp-poc</code> namespace'inde çalışan Nginx Deployment'ı tarafından,
+      <h1>TRT OpenShift POC</h1>
+      <p>Bu sayfa <code>trt-ocp-poc</code> namespace'inde çalışan Nginx Deployment'ı tarafından,
          bir ConfigMap üzerinden mount edilerek sunulmaktadır.</p>
     </body>
     </html>
@@ -51,7 +51,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nginx
-  namespace: tb-ocp-poc
+  namespace: trt-ocp-poc
   labels:
     app: nginx
 spec:
@@ -109,7 +109,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: nginx
-  namespace: tb-ocp-poc
+  namespace: trt-ocp-poc
   labels:
     app: nginx
 spec:
@@ -125,7 +125,7 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: nginx
-  namespace: tb-ocp-poc
+  namespace: trt-ocp-poc
   labels:
     app: nginx
 spec:

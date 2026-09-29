@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: LimitRange
 metadata:
-  name: tb-ocp-poc-limits
-  namespace: tb-ocp-poc
+  name: trt-ocp-poc-limits
+  namespace: trt-ocp-poc
 spec:
   limits:
     - type: Container

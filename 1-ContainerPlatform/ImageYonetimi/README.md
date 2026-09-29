@@ -75,8 +75,8 @@ podman login --tls-verify=false -u "$(oc whoami)" -p "$(oc whoami -t)" "$REG"
 
 ```bash
 podman pull docker.io/library/alpine:3.20
-podman tag docker.io/library/alpine:3.20 "$REG/tb-ocp-poc/demo-alpine:latest"
-podman push --tls-verify=false "$REG/tb-ocp-poc/demo-alpine:latest"
+podman tag docker.io/library/alpine:3.20 "$REG/trt-ocp-poc/demo-alpine:latest"
+podman push --tls-verify=false "$REG/trt-ocp-poc/demo-alpine:latest"
 ```
 
 > Push edebilmek için o namespace'te en az `edit` rolüne sahip olmanız yeterlidir.
@@ -84,8 +84,8 @@ podman push --tls-verify=false "$REG/tb-ocp-poc/demo-alpine:latest"
 **3) ImageStream'in otomatik oluştuğunu doğrulayın:**
 
 ```bash
-oc get imagestream -n tb-ocp-poc
-oc describe imagestream demo-alpine -n tb-ocp-poc
+oc get imagestream -n trt-ocp-poc
+oc describe imagestream demo-alpine -n trt-ocp-poc
 ```
 
 Push işlemi namespace'te otomatik olarak bir **ImageStream** (`demo-alpine`) oluşturur/günceller — ayrıca `oc create imagestream` çalıştırmanıza gerek yoktur.
@@ -93,7 +93,7 @@ Push işlemi namespace'te otomatik olarak bir **ImageStream** (`demo-alpine`) ol
 **4) Cluster içinden, harici route'a hiç gerek olmadan bu imajı kullanın:**
 
 ```bash
-oc run demo-alpine-test --image=image-registry.openshift-image-registry.svc:5000/tb-ocp-poc/demo-alpine:latest --restart=Never -- sleep 3600
+oc run demo-alpine-test --image=image-registry.openshift-image-registry.svc:5000/trt-ocp-poc/demo-alpine:latest --restart=Never -- sleep 3600
 oc get pod demo-alpine-test
 ```
 
@@ -107,7 +107,7 @@ Varsayılan olarak bir Pod/Deployment'ta `image: demo-alpine:latest` gibi kısa 
 oc set image-lookup demo-alpine
 oc run demo-alpine-short --image=demo-alpine:latest --restart=Never -- sleep 3600
 oc get pod demo-alpine-short -o jsonpath='{.spec.containers[0].image}'
-# çıktı: image-registry.openshift-image-registry.svc:5000/tb-ocp-poc/demo-alpine@sha256:...
+# çıktı: image-registry.openshift-image-registry.svc:5000/trt-ocp-poc/demo-alpine@sha256:...
 ```
 
 OpenShift, bir admission webhook üzerinden kısa ismi otomatik olarak tam internal registry pull spec'ine (digest ile birlikte) çözümler.
@@ -115,14 +115,14 @@ OpenShift, bir admission webhook üzerinden kısa ismi otomatik olarak tam inter
 **6) Harici olarak (cluster dışından) pull test:**
 
 ```bash
-podman pull --tls-verify=false "$REG/tb-ocp-poc/demo-alpine:latest"
+podman pull --tls-verify=false "$REG/trt-ocp-poc/demo-alpine:latest"
 ```
 
 ### Temizlik
 
 ```bash
-oc delete imagestream demo-alpine -n tb-ocp-poc
-podman rmi -f docker.io/library/alpine:3.20 "$REG/tb-ocp-poc/demo-alpine:latest"
+oc delete imagestream demo-alpine -n trt-ocp-poc
+podman rmi -f docker.io/library/alpine:3.20 "$REG/trt-ocp-poc/demo-alpine:latest"
 podman logout "$REG"
 ```
 
@@ -154,13 +154,13 @@ Henüz gerçek bir private registry hesabımız olmadığı için mekanizmayı *
 **a) Secret olmadan bir private-tarzı imaj denemesi:**
 
 ```bash
-oc run priv-nosecret --image=docker.io/tbocppoc/private-demo:latest --restart=Never -- sleep 10
+oc run priv-nosecret --image=docker.io/trtocppoc/private-demo:latest --restart=Never -- sleep 10
 ```
 
 Gerçek sonuç (`oc describe pod`):
 
 ```
-Failed to pull image "docker.io/tbocppoc/private-demo:latest": ... requested access to the resource is denied
+Failed to pull image "docker.io/trtocppoc/private-demo:latest": ... requested access to the resource is denied
 ```
 
 **b) `external-registry-pull-secret.yaml` ile secret oluşturup deneyin:**
@@ -178,7 +178,7 @@ oc create secret docker-registry external-registry-cred \
 Placeholder kimlik bilgileriyle tekrar denediğimizde **farklı ve daha spesifik** bir hata aldık — bu, secret'ın gerçekten okunup kullanıldığının kanıtıdır:
 
 ```
-Failed to pull image "docker.io/tbocppoc/private-demo:latest": ...
+Failed to pull image "docker.io/trtocppoc/private-demo:latest": ...
 unable to retrieve auth token: invalid username/password: unauthorized: incorrect username or password
 ```
 

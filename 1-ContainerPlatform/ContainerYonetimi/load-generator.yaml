@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: load-generator
-  namespace: tb-ocp-poc
+  namespace: trt-ocp-poc
   labels:
     app: load-generator
 spec:
@@ -20,4 +20,4 @@ spec:
           command:
             - /bin/sh
             - -c
-            - "while true; do wget -q -O- http://php-apache.tb-ocp-poc.svc.cluster.local > /dev/null; done"
+            - "while true; do wget -q -O- http://php-apache.trt-ocp-poc.svc.cluster.local > /dev/null; done"

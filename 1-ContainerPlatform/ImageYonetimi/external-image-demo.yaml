@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: external-image-demo
-  namespace: tb-ocp-poc
+  namespace: trt-ocp-poc
   labels:
     app: external-image-demo
 spec:
@@ -20,7 +20,7 @@ spec:
       containers:
         - name: app
           # Örnek/placeholder yol: gerçek kullanımda kendi private image path'inizle değiştirin.
-          image: docker.io/tbocppoc/private-demo:latest
+          image: docker.io/trtocppoc/private-demo:latest
           command: ["sleep", "infinity"]
           resources:
             requests:

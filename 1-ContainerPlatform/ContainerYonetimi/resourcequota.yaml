@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: tb-ocp-poc-quota
-  namespace: tb-ocp-poc
+  name: trt-ocp-poc-quota
+  namespace: trt-ocp-poc
 spec:
   hard:
     requests.cpu: "500m"
