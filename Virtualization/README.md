@@ -16,7 +16,7 @@ Senaryo sırası:
 8. Snapshot / restore
 9. Multus — VM'e VLAN (LAN) arayüzü ekleme
 10. Yerleşim — nodeSelector, node affinity, VM affinity / anti-affinity
-11. OADP ile VM yedekleme (hazırlık)
+11. OADP ile VM yedekleme ve geri yükleme
 12. Bilinen sınırlamalar / canlı testte görülenler
 13. Temizlik
 
@@ -36,6 +36,8 @@ Dosyalar:
 | `vm-snapshot.yaml`, `vm-restore.yaml` | Snapshot ve restore |
 | `nad-vlan112.yaml` | VLAN 112 `NetworkAttachmentDefinition` |
 | `scheduling/*.yaml` | nodeSelector, node affinity, anti-affinity, affinity VM'leri |
+| `oadp/namespace.yaml`, `oadp/cross-namespace-clone-rbac.yaml` | Backup testi namespace'i ve namespace'ler arası clone izni |
+| `oadp/backup.yaml`, `oadp/restore.yaml` | Velero Backup / Restore |
 
 ---
 
@@ -286,7 +288,20 @@ virtctl ssh fedora@vmi/trt-web-01 -n trt-ocp-poc-virt -i ./vmkey \
   --command 'hostname; cat /etc/machine-id /etc/trt-golden; systemctl is-active httpd; curl -s localhost'
 ```
 
-> ⏳ **Bu son adım (template'ten VM açıp doğrulama) henüz canlı test edilmedi.** Adım 1–4 test edildi.
+✅ **Gerçek çıktı:** `oc process --parameters` → `NAME` (varsayılan `trt-web-golden-[a-z0-9]{6}`), `CLOUD_USER_PASSWORD`, `SSH_KEY_SECRET`. Template'ten açılan iki VM'de:
+
+| | `trt-web-01` | `trt-web-02` |
+|---|---|---|
+| hostname | `trt-web-01` | `trt-web-02` |
+| machine-id | `92a2346b...` | `de0affe7...` |
+| SSH host key | `SHA256:omHiiCKc...` | `SHA256:8bCZoXDD...` |
+| MAC | `02:ed:88:63:8b:48` | `02:ed:88:63:8b:49` |
+| `/etc/trt-golden` | `TRT kurumsal ayar v1` | `TRT kurumsal ayar v1` |
+| httpd | `active`, `<h1>TRT golden web sunucusu</h1>` | `active`, `<h1>TRT golden web sunucusu</h1>` |
+
+Özelleştirmeler (paket, servis, ayar dosyası) golden image'dan geldi. Makineye özgü kimlikler (hostname, machine-id, SSH host key, MAC) her VM'de yeniden üretildi; genelleştirme doğru çalıştı. Diskler `ocs-storagecluster-ceph-rbd-virtualization` üzerinde 30Gi olarak açıldı.
+
+> **Template'i başka bir namespace'te kullanmak:** Template ve golden image `trt-ocp-poc-virt`'te dururken başka bir namespace'te VM açılırsa disk klonu `UnauthorizedDataVolumeCreate` hatasıyla bekler (bkz. bölüm 11.2). Kaynak namespace'te clone izni verilmelidir: `oadp/cross-namespace-clone-rbac.yaml`.
 
 **Console karşılığı:**
 
@@ -699,19 +714,106 @@ spec:
 
 ---
 
-## 11. OADP ile VM Yedekleme (hazırlık)
+## 11. OADP ile VM Yedekleme ve Geri Yükleme
 
-VM'lerin OADP (Velero) ile yedeklenebilmesi için DPA'da `kubevirt` ve `csi` plugin'leri gerekir. Bu repodaki `../OADP/README.md` ile kurulan `dpa-odf` şu şekilde güncellendi:
+Senaryo: golden template'ten açılmış, içinde kritik veri olan bir VM'in bulunduğu namespace **VM çalışırken** yedeklenir. Ardından namespace tamamen silinir (felaket) ve OADP ile geri yüklenir. Veri bütünlüğü SHA256 ile doğrulanır.
+
+### 11.1 DPA: `kubevirt` ve `csi` plugin'leri
+
+Bu repodaki `../OADP/README.md` ile kurulan `dpa-odf`'e VM desteği eklenir:
 
 ```bash
 oc patch dpa dpa-odf -n openshift-adp --type=merge \
   -p '{"spec":{"configuration":{"velero":{"defaultPlugins":["openshift","aws","csi","kubevirt"]}}}}'
 oc rollout status deploy/velero -n openshift-adp
+oc get dpa dpa-odf -n openshift-adp -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}{"\n"}{end}'
 ```
 
-✅ **Gerçek çıktı:** Velero deployment'ı yeniden açıldı. Init container'lar: `openshift-velero-plugin`, `velero-plugin-for-aws`, `kubevirt-velero-plugin`.
+✅ **Gerçek çıktı:** Velero init container'ları `openshift-velero-plugin`, `velero-plugin-for-aws`, `kubevirt-velero-plugin`. Velero argümanlarında `--features=EnableCSI`. DPA `Reconciled=True Complete`, `VeleroReady=True`. BSL `dpa-odf-1` `Available`.
 
-> ⏳ **Backup / restore testi henüz yapılmadı.** Namespace yedeği, namespace silme ve restore adımları `../OADP/README.md`'deki akışla (`includedNamespaces: [trt-ocp-poc-virt]`, `snapshotVolumes: true`) uygulanacak ve sonuçlar buraya eklenecek. CSI snapshot'ları sadece Ceph içinde tutulur, bu yüzden aynı cluster'a restore için yeterlidir. Farklı bir cluster'a taşıma / gerçek DR için DPA'da `nodeAgent` açılıp `snapshotMoveData: true` (Data Mover) kullanılmalıdır.
+- **`kubevirt` plugin'i:** VM, VMI, DataVolume, PVC ve virt-launcher pod'unu birbirine bağlı olarak yedekler. Çalışan VM'lerde snapshot öncesi guest agent ile dosya sistemini dondurur (freeze) ve sonra çözer (unfreeze).
+- **`csi` plugin'i:** PVC'leri ODF (Ceph RBD) CSI snapshot'ı ile yedekler.
+
+### 11.2 Test VM'i (ayrı namespace)
+
+```bash
+oc apply -f oadp/namespace.yaml                              # trt-ocp-poc-virt-backup
+oc create secret generic vm-ssh-key -n trt-ocp-poc-virt-backup --from-file=key=./vmkey.pub
+oc apply -f oadp/cross-namespace-clone-rbac.yaml             # golden image başka namespace'te
+oc process trt-web-golden -n trt-ocp-poc-virt -p NAME=trt-backup-vm | oc apply -n trt-ocp-poc-virt-backup -f -
+```
+
+✅ **Gerçek çıktı (RBAC olmadan):** VM `Stopped` kaldı. Event: `UnauthorizedDataVolumeCreate ... User system:serviceaccount:trt-ocp-poc-virt-backup:default has insufficient permissions in clone source namespace trt-ocp-poc-virt`. `cross-namespace-clone-rbac.yaml` uygulandıktan sonra klon **9 saniyede** `Succeeded` oldu ve VM açıldı.
+
+```bash
+# VM içinde kritik veri
+echo "backup oncesi kritik veri $(date -u +%FT%TZ)" | sudo tee /var/www/html/kritik.txt; sync
+sha256sum /var/www/html/kritik.txt
+```
+
+✅ **Gerçek çıktı:** `12c6bd409aca3bb6749e1a15559d82e0059b6ef09e57a40aa3a7fb8e824e95b2`, machine-id `61920a66aee74c70b57134a7fcbb65e5`.
+
+### 11.3 Backup (VM çalışırken)
+
+`oadp/backup.yaml`, CSI snapshot class'ını **Backup üzerindeki annotation ile** belirtir:
+
+```yaml
+annotations:
+  velero.io/csi-volumesnapshot-class_openshift-storage.rbd.csi.ceph.com: ocs-storagecluster-rbdplugin-snapclass
+```
+
+> Velero normalde `velero.io/csi-volumesnapshot-class=true` etiketli VolumeSnapshotClass'ı arar. Bedrock'ta bu etiket yok. Paylaşımlı VolumeSnapshotClass'ı etiketlemek yerine annotation yöntemi kullanıldı; bu yöntem cluster geneline dokunmaz. Kalıcı kullanım için `oc label volumesnapshotclass ocs-storagecluster-rbdplugin-snapclass velero.io/csi-volumesnapshot-class=true` daha pratiktir.
+
+```bash
+oc apply -f oadp/backup.yaml
+oc get backups.velero.io trt-vm-backup-1 -n openshift-adp -w
+```
+
+> ⚠️ Bu cluster'da CloudNativePG kurulu olduğu için **`oc get backup` CNPG'nin `backups.postgresql.cnpg.io` kaynağını getirir** ve `NotFound` döner. Velero nesneleri için tam adı kullanın: `backups.velero.io`, `restores.velero.io`.
+
+✅ **Gerçek çıktı:**
+
+```
+phase=Completed items=91/91 csi=1/1 errors= warnings= start=12:20:48Z end=12:22:21Z
+hookStatus: {"hooksAttempted":2}
+```
+
+Velero logunda freeze/unfreeze hook'ları: `/usr/bin/virt-freezer --freeze ...` → `Guest agent version is 10.2.2`, `Operation completed successfully`; snapshot sonrası `virt-freezer --unfreeze` → `Operation completed successfully`. Süre **~1,5 dakika**, VM kapatılmadı.
+
+### 11.4 Felaket simülasyonu ve restore
+
+```bash
+oc delete namespace trt-ocp-poc-virt-backup          # VM, disk (PVC) ve tüm kaynaklar silinir
+oc apply -f oadp/restore.yaml
+oc get restores.velero.io trt-vm-restore-1 -n openshift-adp -w
+```
+
+✅ **Gerçek çıktı:**
+
+```
+phase=Completed items=57/57 errors= warnings=14 start=12:34:39Z end=12:35:22Z
+virtualmachine.kubevirt.io/trt-backup-vm   Running
+persistentvolumeclaim/trt-backup-vm        Bound   30Gi   RWX   ocs-storagecluster-ceph-rbd-virtualization
+```
+
+Restore **43 saniyede** tamamlandı ve VM kendiliğinden açıldı. Disk yeniden klonlanmadı, CSI snapshot'tan geri yüklendi.
+
+**Veri doğrulama (VM içinde):**
+
+```
+backup oncesi kritik veri 2026-09-29T12:20:37Z
+12c6bd409aca3bb6749e1a15559d82e0059b6ef09e57a40aa3a7fb8e824e95b2  /var/www/html/kritik.txt
+machine-id: 61920a66aee74c70b57134a7fcbb65e5
+httpd: active
+```
+
+SHA256 ve machine-id birebir aynı: aynı VM, verisiyle birlikte geri geldi.
+
+**14 uyarı (zararsız):** Hepsi `could not restore, ... already exists` türündedir. Cluster'da zaten bulunan CRD'ler (`virtualmachines.kubevirt.io`, `datavolumes.cdi.kubevirt.io` ...) ve SCC `kubevirt-controller` ile namespace oluşturulurken OpenShift'in otomatik yarattığı `kube-root-ca.crt`, `openshift-service-ca.crt`, `istio-ca-*` ConfigMap'leri, pipeline RoleBinding'leri ve dockercfg secret'ları için verilir.
+
+**Console:** OADP operatörü Console'a ayrı bir ekran eklemez. **Operators → Installed Operators → OADP → Backup / Restore** sekmelerinden **Create Backup / Create Restore** formları (YAML/form) kullanılır. Durum aynı sekmelerden izlenir.
+
+> **Kapsam notu:** CSI snapshot'lar Ceph içinde tutulur, S3'e sadece Kubernetes nesneleri yazılır. Bu yüzden bu yöntem **aynı cluster'a** geri dönüş için yeterlidir. Ceph'in kendisi kaybedilirse ya da VM başka bir cluster'a taşınacaksa DPA'da `nodeAgent` açılıp Backup'ta `snapshotMoveData: true` (Data Mover) kullanılmalıdır. Bu durumda disk verisi de S3'e (ODF RGW) kopyalanır.
 
 ---
 
@@ -724,6 +826,8 @@ oc rollout status deploy/velero -n openshift-adp
 - **`virtctl start` sonrası `oc wait vmi`:** VMI nesnesi birkaç saniye sonra oluşur. Hemen `oc wait vmi` çalıştırılırsa `NotFound` döner. `oc wait vm <ad> --for=condition=Ready` kullanın ya da kısa bir bekleme ekleyin.
 - **Windows ISO kurulumu:** Windows kurulum ekranı virtio disk/ağ sürücülerini tanımaz. OpenShift Virtualization'ın sağladığı `virtio-win` container disk'i ikinci CD-ROM olarak takılmalıdır (Console'da "Mount Windows drivers disk" kutusu). Ya da disk `sata` bus ile oluşturulup kurulum sonrası virtio sürücüleri yüklenmelidir.
 - **Golden image genelleştirme:** Klonlanan disk hostname, SSH host key, machine-id gibi kimlikleri de taşır (bkz. bölüm 5).
+- **Namespace'ler arası disk klonu RBAC ister:** Golden image/template başka namespace'teyse `UnauthorizedDataVolumeCreate` alınır. Kaynak namespace'te hedef namespace'in ServiceAccount'una `datavolumes/source` izni verilmelidir (`oadp/cross-namespace-clone-rbac.yaml`).
+- **`oc get backup` belirsizliği:** CloudNativePG gibi `Backup` adlı CRD'si olan operatörler kuruluysa `oc get backup` Velero'yu getirmez. `backups.velero.io` / `restores.velero.io` kullanın.
 
 ---
 
@@ -734,7 +838,19 @@ oc delete -f scheduling/ --ignore-not-found
 oc delete vm alpine-from-golden alpine-from-iso fedora-from-template trt-vm-from-custom-template -n trt-ocp-poc-virt
 oc delete vmrestore,vmsnapshot --all -n trt-ocp-poc-virt
 oc delete template trt-fedora-small trt-web-golden -n trt-ocp-poc-virt
-oc delete namespace trt-ocp-poc-virt
+oc delete namespace trt-ocp-poc-virt trt-ocp-poc-virt-backup
+oc delete clusterrole trt-datavolume-cloner
+oc delete restores.velero.io trt-vm-restore-1 -n openshift-adp
+# Backup'ı S3 verisi ve CSI snapshot'larıyla birlikte silmek için (yoksa TTL ile 72 saat sonra kendiliğinden silinir):
+oc create -f - <<'EOF'
+apiVersion: velero.io/v1
+kind: DeleteBackupRequest
+metadata:
+  generateName: trt-vm-backup-1-delete-
+  namespace: openshift-adp
+spec:
+  backupName: trt-vm-backup-1
+EOF
 ```
 
 `dpa-odf`'teki plugin eklemesini geri almak için (OADP rehberindeki orijinal hali):
@@ -753,7 +869,7 @@ oc patch dpa dpa-odf -n openshift-adp --type=merge \
 | Template listeleme / export / parametreler | `oc get template`, `oc get -o yaml`, `oc process --parameters` | Virtualization → Templates | ✅ |
 | Template'ten VM | `oc process ... \| oc apply` | Catalog → Template catalog | ✅ 20 sn'de Running |
 | Özel template | `custom-template.yaml` | Templates → Clone | ✅ SSH key parametresiyle |
-| Var olan VM'den template | `vm-to-template.sh` | Bootable volumes + Templates → Clone | ✅ Golden image + Template üretildi, ⏳ ondan VM açma testi bekliyor |
+| Var olan VM'den template | `vm-to-template.sh` | Bootable volumes + Templates → Clone | ✅ 2 VM açıldı; özelleştirmeler geldi, kimlikler yenilendi |
 | ISO yükleme | `virtctl image-upload` | Bootable volumes → Upload | ✅ 66 MB / 37 sn |
 | ISO'dan kurulum | `vm-from-iso.yaml` + console | Boot from CD | ✅ Kurulum + CD-ROM çıkarma + diskten boot |
 | Golden image | `golden-image.yaml` | Bootable volumes | ✅ |
@@ -763,4 +879,4 @@ oc patch dpa dpa-odf -n openshift-adp --type=merge \
 | Multus VLAN NIC | `nad-vlan112.yaml` + patch (hotplug) | Network → Add interface | ✅ LAN IP'sine doğrudan SSH |
 | nodeSelector / node affinity | `scheduling/*.yaml` | Scheduling sekmesi | ✅ |
 | VM affinity / anti-affinity | `scheduling/*.yaml` | Scheduling → Affinity rules | ✅ 4. VM Unschedulable |
-| OADP ile VM backup | DPA `kubevirt` + `csi` plugin | — | ⏳ Plugin eklendi, backup testi bekliyor |
+| OADP ile VM backup / restore | `oadp/backup.yaml`, `oadp/restore.yaml` | Installed Operators → OADP | ✅ Çalışırken backup (freeze), namespace silindi, restore 43 sn, SHA256 aynı |

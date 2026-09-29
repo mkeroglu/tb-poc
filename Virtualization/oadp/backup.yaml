@@ -1,0 +1,14 @@
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: trt-vm-backup-1
+  namespace: openshift-adp
+  annotations:
+    # Paylaşımlı VolumeSnapshotClass'ı etiketlemeden, bu backup için kullanılacak class'ı belirtir
+    velero.io/csi-volumesnapshot-class_openshift-storage.rbd.csi.ceph.com: ocs-storagecluster-rbdplugin-snapclass
+spec:
+  includedNamespaces:
+    - trt-ocp-poc-virt-backup
+  snapshotVolumes: true          # PVC'ler CSI snapshot ile yedeklenir
+  storageLocation: dpa-odf-1
+  ttl: 72h0m0s
