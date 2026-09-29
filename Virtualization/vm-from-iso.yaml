@@ -1,0 +1,57 @@
+# ISO'dan kurulum yapılacak VM: CD-ROM (ISO) + boş kurulum diski
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: alpine-from-iso
+  namespace: trt-ocp-poc-virt
+spec:
+  runStrategy: Always
+  dataVolumeTemplates:
+    - metadata:
+        name: alpine-from-iso-rootdisk
+      spec:
+        source:
+          blank: {}                      # boş disk — işletim sistemi ISO'dan buraya kurulacak
+        storage:
+          storageClassName: ocs-storagecluster-ceph-rbd-virtualization
+          accessModes: [ReadWriteMany]   # live migration için RWX
+          volumeMode: Block
+          resources:
+            requests:
+              storage: 5Gi
+  template:
+    metadata:
+      labels:
+        app: alpine-from-iso
+    spec:
+      domain:
+        cpu:
+          cores: 1
+        memory:
+          guest: 1Gi
+        firmware:
+          bootloader:
+            bios: {}
+        devices:
+          disks:
+            - name: rootdisk
+              bootOrder: 2               # kurulumdan sonra buradan boot edecek
+              disk:
+                bus: virtio
+            - name: installation-cdrom
+              bootOrder: 1               # ilk açılışta ISO'dan boot
+              cdrom:
+                bus: sata
+          interfaces:
+            - name: default
+              masquerade: {}
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: alpine-from-iso-rootdisk
+        - name: installation-cdrom
+          persistentVolumeClaim:
+            claimName: alpine-iso         # virtctl image-upload / Console upload ile yüklenen ISO
