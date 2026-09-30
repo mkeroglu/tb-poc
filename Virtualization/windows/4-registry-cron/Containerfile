@@ -1,0 +1,7 @@
+# Windows golden imajını containerDisk olarak paketler (disk /disk/ altında, qemu UID 107 sahibi).
+# ÖNEMLİ: Disk qcow2 (tercihen "qemu-img convert -c" ile sıkıştırılmış) ya da raw olmalı.
+#         .gz/.xz KULLANMAYIN — CDI registry kaynağında arşivi açmaz, dosyayı olduğu gibi diske yazar (canlı test).
+# Kullanım: podman build -t <registry>/windows/win2k22:<tarih> --build-arg DISK=win2k22-golden.qcow2 .
+FROM scratch
+ARG DISK=disk.qcow2
+ADD --chown=107:107 ${DISK} /disk/

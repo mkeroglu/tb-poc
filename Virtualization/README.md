@@ -19,6 +19,7 @@ Senaryo sırası:
 11. OADP ile VM yedekleme ve geri yükleme
 12. Bilinen sınırlamalar / canlı testte görülenler
 13. Temizlik
+14. Windows VM'ler → ayrı rehber: [`windows/README.md`](windows/README.md)
 
 Dosyalar:
 
@@ -824,7 +825,7 @@ SHA256 ve machine-id birebir aynı: aynı VM, verisiyle birlikte geri geldi.
 - **Hotplug diskler SCSI'dır:** `/dev/sdX` olarak görünür, `virtio` değil (bkz. 6.1).
 - **`runStrategy: Always` + misafir içi `poweroff`:** VM yeniden başlatılır. Kalıcı kapatma için `virtctl stop` / Console **Stop** kullanın.
 - **`virtctl start` sonrası `oc wait vmi`:** VMI nesnesi birkaç saniye sonra oluşur. Hemen `oc wait vmi` çalıştırılırsa `NotFound` döner. `oc wait vm <ad> --for=condition=Ready` kullanın ya da kısa bir bekleme ekleyin.
-- **Windows ISO kurulumu:** Windows kurulum ekranı virtio disk/ağ sürücülerini tanımaz. OpenShift Virtualization'ın sağladığı `virtio-win` container disk'i ikinci CD-ROM olarak takılmalıdır (Console'da "Mount Windows drivers disk" kutusu). Ya da disk `sata` bus ile oluşturulup kurulum sonrası virtio sürücüleri yüklenmelidir.
+- **Windows ISO kurulumu:** Windows kurulum ekranı virtio disk/ağ sürücülerini tanımaz. OpenShift Virtualization'ın sağladığı `virtio-win` container disk'i ikinci CD-ROM olarak takılmalıdır (Console'da "Mount Windows drivers disk" kutusu). Canlı test edilmiş ayrıntılar için bkz. [`windows/README.md`](windows/README.md).
 - **Golden image genelleştirme:** Klonlanan disk hostname, SSH host key, machine-id gibi kimlikleri de taşır (bkz. bölüm 5).
 - **Namespace'ler arası disk klonu RBAC ister:** Golden image/template başka namespace'teyse `UnauthorizedDataVolumeCreate` alınır. Kaynak namespace'te hedef namespace'in ServiceAccount'una `datavolumes/source` izni verilmelidir (`oadp/cross-namespace-clone-rbac.yaml`).
 - **`oc get backup` belirsizliği:** CloudNativePG gibi `Backup` adlı CRD'si olan operatörler kuruluysa `oc get backup` Velero'yu getirmez. `backups.velero.io` / `restores.velero.io` kullanın.
@@ -862,6 +863,12 @@ oc patch dpa dpa-odf -n openshift-adp --type=merge \
 
 ---
 
+## 14. Windows VM'ler
+
+Windows template'leri kurulumla birlikte gelir, ancak Microsoft lisansı nedeniyle **Windows boot source'u (imaj) gelmez**; kurumun sağlaması gerekir. Dört yöntem (hazır imajı yükleme, ISO'dan kurulum, Tekton pipeline, registry + `DataImportCron`) Windows Server 2022 ile canlı test edilmiş ve ayrı bir rehberde toplanmıştır: **[`windows/README.md`](windows/README.md)**.
+
+---
+
 ## Özet Tablo
 
 | Senaryo | CLI | Console | Canlı test |
@@ -880,3 +887,4 @@ oc patch dpa dpa-odf -n openshift-adp --type=merge \
 | nodeSelector / node affinity | `scheduling/*.yaml` | Scheduling sekmesi | ✅ |
 | VM affinity / anti-affinity | `scheduling/*.yaml` | Scheduling → Affinity rules | ✅ 4. VM Unschedulable |
 | OADP ile VM backup / restore | `oadp/backup.yaml`, `oadp/restore.yaml` | Installed Operators → OADP | ✅ Çalışırken backup (freeze), namespace silindi, restore 43 sn, SHA256 aynı |
+| Windows boot source (4 yöntem) | `windows/` | Bootable volumes, Template catalog, Pipelines | ✅ Dört yöntemde de hazır `windows2k22-server-medium` template'inden VM açıldı, RDP erişilebilir |

@@ -1,0 +1,25 @@
+# Kurum registry'sindeki Windows containerDisk'ini düzenli olarak kontrol edip yeni sürüm varsa
+# otomatik içe aktaran ve "win2k22-registry" DataSource'unu en güncel imaja yönlendiren cron.
+# (RHEL/Fedora boot source'ları da cluster'da tam olarak bu mekanizmayla güncel tutuluyor.)
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataImportCron
+metadata:
+  name: win2k22-image-cron
+  namespace: trt-ocp-poc-win
+spec:
+  schedule: "0 3 * * 1"              # her Pazartesi 03:00'te registry'de yeni digest var mı bakar
+  managedDataSource: win2k22-registry # bu DataSource'u oluşturur/günceller
+  importsToKeep: 2                    # eski imajlardan son 2'si tutulur
+  garbageCollect: Outdated
+  template:
+    spec:
+      source:
+        registry:
+          url: docker://test-registry-trt-ocp-poc-win.apps.bedrock.linuxera.hq/windows/win2k22:latest
+          certConfigMap: trt-poc-registry-ca   # registry TLS CA; hem bu namespace'te hem openshift-cnv'de olmalı (README)
+          # secretRef: registry-pull-secret   # kimlik doğrulamalı registry için (accessKeyId/secretKey)
+      storage:
+        storageClassName: ocs-storagecluster-ceph-rbd-virtualization
+        resources:
+          requests:
+            storage: 60Gi
