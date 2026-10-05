@@ -1,0 +1,8 @@
+# virtctl migrate fedora-from-template ile aynı işi yapar
+apiVersion: kubevirt.io/v1
+kind: VirtualMachineInstanceMigration
+metadata:
+  name: fedora-from-template-migration
+  namespace: sekom-ocp-poc-virt
+spec:
+  vmiName: fedora-from-template

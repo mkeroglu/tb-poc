@@ -1,0 +1,29 @@
+# ISO'dan kurulup sysprep ile kapanan VM'in diskinden golden image (boot source)
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: win2k22-from-iso
+  namespace: sekom-ocp-poc-win
+spec:
+  source:
+    pvc:
+      name: win2k22-installer-rootdisk
+      namespace: sekom-ocp-poc-win
+  storage:
+    storageClassName: ocs-storagecluster-ceph-rbd-virtualization
+    accessModes: [ReadWriteMany]
+    volumeMode: Block
+    resources:
+      requests:
+        storage: 60Gi
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataSource
+metadata:
+  name: win2k22-from-iso
+  namespace: sekom-ocp-poc-win
+spec:
+  source:
+    pvc:
+      name: win2k22-from-iso
+      namespace: sekom-ocp-poc-win

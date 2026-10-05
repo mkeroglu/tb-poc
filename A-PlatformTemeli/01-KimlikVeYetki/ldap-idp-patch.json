@@ -1,0 +1,24 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/identityProviders/-",
+    "value": {
+      "name": "Kurum-LDAP",
+      "type": "LDAP",
+      "mappingMethod": "claim",
+      "ldap": {
+        "url": "ldaps://<LDAP_SUNUCUSU>:636/<USER_BASE_DN>?sAMAccountName?sub?(objectClass=person)",
+        "bindDN": "<BIND_KULLANICI_DN>",
+        "bindPassword": { "name": "ldap-bind-password" },
+        "ca": { "name": "ldap-ca" },
+        "insecure": false,
+        "attributes": {
+          "id": ["sAMAccountName"],
+          "preferredUsername": ["sAMAccountName"],
+          "name": ["cn"],
+          "email": ["mail"]
+        }
+      }
+    }
+  }
+]

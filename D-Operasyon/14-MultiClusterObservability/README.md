@@ -1,0 +1,251 @@
+# 14 — OpenShift'te ODF (S3) ile MultiClusterObservability Kurulumu — Uçtan Uca CLI Rehberi
+
+> [← 13 — East-West Trafik Kontrolü](../13-EastWestTrafficControl/README.md) · [POC akışı](../../README.md) · [15 — ODF Performans Testi →](../15-ODFPerformanceTest/README.md)
+
+Bu doküman, Red Hat Advanced Cluster Management (ACM) bileşeni olan
+**MultiClusterObservability (MCO)**'yu, metrik depolama (Thanos object storage)
+için **OpenShift Data Foundation (ODF)**'in S3 uyumlu **NooBaa** Multi-Cloud
+Gateway'i üzerinden oluşturulan bir bucket kullanarak, tamamen `oc` CLI ile
+kurma adımlarını anlatır.
+
+> Bu adımlar `bedrock` kümesinde fiilen uygulanan kurulumun genelleştirilmiş
+> halidir.
+
+## Ön koşullar
+
+- `oc` ile küme-yönetici (cluster-admin) yetkisiyle giriş yapılmış olmalı.
+- **ACM / MultiClusterHub** kurulu ve `Running` durumda olmalı:
+
+  ```bash
+  oc get multiclusterhub -A
+  ```
+
+- **ODF** operatörü kurulu ve bir `StorageCluster` mevcut olmalı:
+
+  ```bash
+  oc get csv -n openshift-storage | grep odf-operator
+  oc get storagecluster -n openshift-storage
+  ```
+
+- MCO CRD'lerinin küme üzerinde var olduğunu doğrulayın (ACM observability
+  bileşeni ile birlikte gelir):
+
+  ```bash
+  oc get crd multiclusterobservabilities.observability.open-cluster-management.io
+  ```
+
+## 1. Adım — ODF/NooBaa üzerinden S3 bucket oluşturma (ObjectBucketClaim)
+
+ODF, S3 bucket taleplerini Kubernetes native bir kaynak olan
+`ObjectBucketClaim` (OBC) ile karşılar. `openshift-storage.noobaa.io`
+storage class'ı NooBaa'nın kendi S3 servisini kullanarak bucket'ı otomatik
+oluşturur.
+
+```bash
+cat <<'EOF' | oc apply -f -
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: multiclusterobs
+  namespace: openshift-storage
+spec:
+  generateBucketName: multiclusterobs
+  storageClassName: openshift-storage.noobaa.io
+  additionalConfig:
+    bucketclass: noobaa-default-bucket-class
+EOF
+```
+
+OBC'nin `Bound` olmasını bekleyin:
+
+```bash
+oc wait --for=jsonpath='{.status.phase}'=Bound \
+  obc/multiclusterobs -n openshift-storage --timeout=120s
+```
+
+OBC bound olduğunda ODF otomatik olarak aynı isimde bir **Secret** (erişim
+anahtarları) ve bir **ConfigMap** (bucket/endpoint bilgisi) üretir:
+
+```bash
+oc get obc multiclusterobs -n openshift-storage
+oc get secret multiclusterobs -n openshift-storage
+oc get cm multiclusterobs -n openshift-storage -o yaml
+```
+
+ConfigMap içeriği örnek:
+
+```yaml
+data:
+  BUCKET_HOST: s3.openshift-storage.svc
+  BUCKET_NAME: multiclusterobs-<uuid>
+  BUCKET_PORT: "443"
+```
+
+## 2. Adım — Bucket bilgilerini ve kimlik bilgilerini okuma
+
+```bash
+BUCKET_NAME=$(oc get cm multiclusterobs -n openshift-storage -o jsonpath='{.data.BUCKET_HOST}')
+BUCKET_NAME=$(oc get cm multiclusterobs -n openshift-storage -o jsonpath='{.data.BUCKET_NAME}')
+ACCESS_KEY=$(oc get secret multiclusterobs -n openshift-storage -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+SECRET_KEY=$(oc get secret multiclusterobs -n openshift-storage -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+```
+
+Küme içi NooBaa S3 servisinin adresini de doğrulayın (LoadBalancer/ClusterIP
+servis, port 80/443):
+
+```bash
+oc get svc s3 -n openshift-storage
+```
+
+## 3. Adım — Observability namespace'i ve Thanos object-storage secret'ı
+
+MCO'nun bileşenleri `open-cluster-management-observability` namespace'inde
+çalışır; bu namespace ACM/MCH kurulumuyla zaten oluşmuş olmalıdır (yoksa
+`oc create ns open-cluster-management-observability` ile oluşturulabilir).
+
+Thanos'un S3'e nasıl bağlanacağını tanımlayan `thanos.yaml` içerikli bir
+Secret oluşturun:
+
+```bash
+cat <<EOF > /tmp/thanos.yaml
+type: s3
+config:
+  bucket: ${BUCKET_NAME}
+  endpoint: s3.openshift-storage.svc:80
+  insecure: true
+  access_key: ${ACCESS_KEY}
+  secret_key: ${SECRET_KEY}
+EOF
+
+oc create secret generic thanos-object-storage \
+  -n open-cluster-management-observability \
+  --from-file=thanos.yaml=/tmp/thanos.yaml
+
+rm -f /tmp/thanos.yaml
+```
+
+> **Not:** `endpoint` alanında port **80** ve `insecure: true` kullanılıyor
+> çünkü küme içinden NooBaa S3 servisine düz HTTP ile erişiliyor (trafik
+> cluster network'ünden çıkmıyor). Kümeler arası / dışarıdan erişimde TLS
+> (443, `insecure: false`) tercih edilmelidir.
+
+## 4. Adım — Kullanılacak StorageClass'ı belirleme
+
+MCO'nun Thanos bileşenleri (Alertmanager, Compact, Receive, Rule, Store)
+kendi PVC'leri için bir blok depolama StorageClass'ına ihtiyaç duyar. ODF'in
+varsayılan RBD class'ı genelde uygundur:
+
+```bash
+oc get storageclass
+# örn: ocs-storagecluster-ceph-rbd (default)
+```
+
+## 5. Adım — MultiClusterObservability CR'ını oluşturma
+
+```bash
+cat <<'EOF' | oc apply -f -
+apiVersion: observability.open-cluster-management.io/v1beta2
+kind: MultiClusterObservability
+metadata:
+  name: observability
+spec:
+  observabilityAddonSpec: {}
+  storageConfig:
+    metricObjectStorage:
+      name: thanos-object-storage
+      key: thanos.yaml
+    storageClass: ocs-storagecluster-ceph-rbd
+    alertmanagerStorageSize: 1Gi
+    compactStorageSize: 100Gi
+    receiveStorageSize: 25Gi
+    ruleStorageSize: 1Gi
+    storeStorageSize: 25Gi
+EOF
+```
+
+Alan notları:
+
+| Alan | Açıklama |
+|---|---|
+| `metricObjectStorage.name/key` | 3. adımda oluşturulan Secret'ın adı ve içindeki key |
+| `storageClass` | PVC'ler için kullanılacak blok depolama sınıfı |
+| `*StorageSize` | Her Thanos bileşeninin PVC boyutu (ihtiyaca göre ayarlanır) |
+
+`v1beta2` API'sinde `observabilityAddonSpec` ve `storageConfig` zorunlu
+alanlardır; şema doğrulaması CRD üzerinden kontrol edilebilir:
+
+```bash
+oc get crd multiclusterobservabilities.observability.open-cluster-management.io -o json \
+  | jq '.spec.versions[] | select(.storage==true) | .schema.openAPIV3Schema.properties.spec.required'
+```
+
+## 6. Adım — Kurulumu doğrulama
+
+```bash
+# CR durumu
+oc get multiclusterobservability observability -o jsonpath='{range .status.conditions[*]}{.type}={.status} ({.reason}): {.message}{"\n"}{end}'
+
+# Pod'ların ayağa kalkışı
+oc get pods -n open-cluster-management-observability -w
+```
+
+Kurulum tamamlandığında `Installing=False`, `Ready=True` koşulları
+görünmelidir ve namespace'te şu bileşenler `Running`/`Ready` olmalıdır:
+
+- `observability-alertmanager-*`
+- `observability-grafana-*`
+- `observability-observatorium-api-*`
+- `observability-observatorium-operator-*`
+- `observability-rbac-query-proxy-*`
+- `observability-thanos-compact-*`
+- `observability-thanos-query-*` / `query-frontend-*`
+- `observability-thanos-receive-*`
+- `observability-thanos-rule-*`
+- `observability-thanos-store-shard-*`
+- `observability-thanos-store-memcached-*`
+- `endpoint-observability-operator-*`
+
+Grafana'ya erişim için route:
+
+```bash
+oc get route -n open-cluster-management-observability
+```
+
+## Bilinen davranışlar / sık karşılaşılan durumlar
+
+- **`observability-thanos-store-shard-*` pod'ları uzun süre `0/1 Running`
+  kalabilir.** Bucket'ta önceden yüklenmiş çok sayıda Thanos bloğu varsa
+  (ör. daha önce MCO kurulup silinmiş ama bucket verisi silinmemişse), store
+  gateway her bloğun index header'ını tek tek yükler. Bu süreç normaldir,
+  hata değildir; ilerlemeyi şu şekilde izleyebilirsiniz:
+
+  ```bash
+  oc logs observability-thanos-store-shard-0-0 \
+    -n open-cluster-management-observability -f | grep "loaded new block"
+  ```
+
+  Yavaşsa ama `thanos_blocks_meta_sync_failures_total` metriği `0` ise
+  (pod içinden `curl localhost:10902/metrics` ile kontrol edilebilir),
+  gerçek bir sorun yoktur, sadece zaman alıyordur.
+
+- **`FailedToRetrieveImagePullSecret: multiclusterhub-operator-pull-secret`**
+  uyarısı events'te görülebilir. İmajlar node üzerinde zaten cache'liyse
+  (`Pulled ... already present on machine`) bu engelleyici değildir; yeni bir
+  node'a scheduling olduğunda image pull hatası verirse, ACM/MCH'nin global
+  pull secret'ının ilgili namespace'e senkronize olduğundan emin olun.
+
+- **Bucket'ı yeniden kullanmak isterseniz**: Eğer daha önce oluşturulmuş bir
+  OBC/Secret zaten `Bound` durumdaysa (`oc get obc -A`), yeni bir bucket
+  oluşturmak yerine doğrudan 3. adıma (mevcut bucket bilgileriyle
+  `thanos-object-storage` secret'ını oluşturma) geçebilirsiniz.
+
+## Kaynakların temizlenmesi (isteğe bağlı, geri alınamaz)
+
+```bash
+oc delete multiclusterobservability observability
+oc delete secret thanos-object-storage -n open-cluster-management-observability
+oc delete obc multiclusterobs -n openshift-storage   # bucket verisini de siler
+```
+
+> `obc` silmek NooBaa bucket'ındaki **tüm veriyi kalıcı olarak siler**.
+> Sadece MCO CR'ını silmek bucket'ı ve içindeki metrik verisini korur.

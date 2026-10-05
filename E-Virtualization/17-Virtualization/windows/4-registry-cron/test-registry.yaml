@@ -1,0 +1,64 @@
+# SADECE TEST İÇİN: kurum içi registry'yi (Quay/Harbor/Nexus) temsil eden, ODF PVC'li basit bir OCI registry.
+# Üretimde bu dosya kullanılmaz; containerDisk kurumun kendi registry'sine push edilir.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-registry-data
+  namespace: sekom-ocp-poc-win
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ocs-storagecluster-ceph-rbd
+  resources:
+    requests:
+      storage: 30Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-registry
+  namespace: sekom-ocp-poc-win
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: test-registry}
+  template:
+    metadata:
+      labels: {app: test-registry}
+    spec:
+      containers:
+        - name: registry
+          image: quay.io/libpod/registry:2.8.2
+          ports:
+            - containerPort: 5000
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: test-registry-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-registry
+  namespace: sekom-ocp-poc-win
+spec:
+  selector: {app: test-registry}
+  ports:
+    - port: 5000
+      targetPort: 5000
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: test-registry
+  namespace: sekom-ocp-poc-win
+spec:
+  to:
+    kind: Service
+    name: test-registry
+  tls:
+    termination: edge

@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: trt-ocp-poc-virt
-  labels:
-    app.kubernetes.io/part-of: trt-ocp-poc
-  annotations:
-    openshift.io/display-name: "TRT OCP POC - Virtualization"
-    openshift.io/description: "TRT OpenShift Virtualization POC calismalari icin namespace/proje"

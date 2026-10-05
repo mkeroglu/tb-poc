@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sekom-ocp-poc
+  labels:
+    app.kubernetes.io/part-of: sekom-ocp-poc
+    environment: poc
+  annotations:
+    openshift.io/display-name: "Sekom OCP POC"
+    openshift.io/description: "Sekom OpenShift POC calismalari icin namespace/proje"

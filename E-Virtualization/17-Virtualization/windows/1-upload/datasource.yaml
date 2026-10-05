@@ -1,0 +1,13 @@
+# Yüklenen hazır (sysprep'li) Windows diskini boot source olarak yayınlar.
+# Cluster genelindeki hazır "windows2k22-*" template'lerinin kullanması için üretimde bunun yerine
+# PVC doğrudan openshift-virtualization-os-images/win2k22 adıyla yüklenir (bkz. README 1. yöntem).
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataSource
+metadata:
+  name: win2k22-uploaded
+  namespace: sekom-ocp-poc-win
+spec:
+  source:
+    pvc:
+      name: win2k22-uploaded
+      namespace: sekom-ocp-poc-win

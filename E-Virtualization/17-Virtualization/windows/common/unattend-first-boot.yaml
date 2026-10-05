@@ -1,0 +1,58 @@
+# Golden image'dan (sysprep /generalize /oobe) açılan Windows VM'lerin İLK AÇILIŞ ayarları.
+# VM'e "sysprep" volume olarak takılır; Windows OOBE sırasında bu unattend.xml'i okur ve ekranları atlar.
+#   - Bilgisayar adı: rastgele (*)       - Yerel Administrator şifresi (SekomPoc2026x — POC içindir, üretimde Secret/parametre kullanın)
+#   - Zaman dilimi: Türkiye              - RDP açılır (firewall kuralı dahil)
+# Console karşılığı: VM oluştururken Customize -> Scripts -> Sysprep -> "unattend.xml" alanı.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sekom-windows-first-boot
+  namespace: sekom-ocp-poc-win
+data:
+  unattend.xml: |
+    <?xml version="1.0" encoding="utf-8"?>
+    <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <settings pass="specialize">
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <ComputerName>*</ComputerName>
+          <TimeZone>Turkey Standard Time</TimeZone>
+        </component>
+        <component name="Microsoft-Windows-TerminalServices-LocalSessionManager" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <fDenyTSConnections>false</fDenyTSConnections>
+        </component>
+        <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <RunSynchronous>
+            <!-- RDP firewall kuralları. Not: FirewallGroups/<Group>Remote Desktop</Group> Server 2022'de ETKİSİZ kaldı (canlı test) -->
+            <RunSynchronousCommand wcm:action="add">
+              <Order>1</Order>
+              <Path>netsh advfirewall firewall set rule group="remote desktop" new enable=Yes</Path>
+              <Description>Enable RDP firewall rules</Description>
+            </RunSynchronousCommand>
+          </RunSynchronous>
+        </component>
+      </settings>
+      <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <InputLocale>0409:00000409</InputLocale>   <!-- klavye en-US: VNC/Console tuşları ABD düzeninde gönderir -->
+          <SystemLocale>tr-TR</SystemLocale>
+          <UILanguage>en-US</UILanguage>
+          <UserLocale>tr-TR</UserLocale>
+        </component>
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+          <OOBE>
+            <HideEULAPage>true</HideEULAPage>
+            <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+            <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+            <ProtectYourPC>3</ProtectYourPC>
+            <SkipMachineOOBE>true</SkipMachineOOBE>
+            <SkipUserOOBE>true</SkipUserOOBE>
+          </OOBE>
+          <UserAccounts>
+            <AdministratorPassword>
+              <Value>SekomPoc2026x</Value>
+              <PlainText>true</PlainText>
+            </AdministratorPassword>
+          </UserAccounts>
+        </component>
+      </settings>
+    </unattend>

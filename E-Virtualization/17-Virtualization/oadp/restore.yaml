@@ -1,0 +1,8 @@
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: sekom-vm-restore-1
+  namespace: openshift-adp
+spec:
+  backupName: sekom-vm-backup-1
+  restorePVs: true
