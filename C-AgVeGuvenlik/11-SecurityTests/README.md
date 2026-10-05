@@ -4,7 +4,7 @@
 
 Bu doküman iki ayrı güvenlik konusunu kapsar:
 
-1. **[SCC / PSA Politikaları](#1-scc--psa-politikaları)** — `psa-scc-test` namespace'inde **canlı test edilmiştir**.
+1. **[SCC / PSA Politikaları](#1-scc--psa-politikaları)** — Sekom lab ortamında (OpenShift 4.22) `sekom-psa-scc-test` namespace'inde **canlı test edilmiştir**.
 2. **[Image Signing](#2-image-signing)** — **canlı test edilmemiştir**. Sebebi aşağıda açıklanıyor: bu POC kapsamında denenen ilk adım, bu clusterda **beklenmedik şekilde tüm node'larda (master+worker) bir reboot rollout'u tetikledi**. O yüzden burada sadece **nasıl yapılacağı**, gerçek komutlarla ve bu riskle birlikte anlatılıyor — kararı ve zamanlamayı siz vermelisiniz.
 
 ---
@@ -25,13 +25,16 @@ OpenShift'te bir pod'un ayrıcalıklı bir şey yapabilmesi (root çalışmak, p
 ### Test Ortamı
 
 ```bash
-oc create ns psa-scc-test
-oc label namespace psa-scc-test pod-security.kubernetes.io/enforce=restricted --overwrite
+N=sekom-psa-scc-test
+oc create ns $N
+oc label namespace $N pod-security.kubernetes.io/enforce=restricted --overwrite
 
 # Cluster-admin OLMAYAN, gerçekçi bir kimlik: sadece "edit" yetkili bir SA
-oc create sa tester-sa -n psa-scc-test
-oc create rolebinding tester-edit -n psa-scc-test --clusterrole=edit --serviceaccount=psa-scc-test:tester-sa
+oc create sa tester-sa -n $N
+oc create rolebinding tester-edit -n $N --clusterrole=edit --serviceaccount="${N}:tester-sa"
 ```
+
+> **zsh kullanıcıları:** `$N:tester-sa` yazmayın — zsh `:t`'yi değişken düzenleyicisi sanar ve adı bozar (`...-testester-sa`). `"${N}:tester-sa"` biçimini kullanın.
 
 Test edilen pod (hepsinde aynı, sadece namespace label'ı ve SCC izni değişiyor):
 
@@ -41,7 +44,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: root-test
-  namespace: psa-scc-test
+  namespace: sekom-psa-scc-test
 spec:
   containers:
     - name: test
@@ -54,7 +57,7 @@ spec:
 ### Test 1: Hiçbir ek SCC izni yok, PSA = `restricted` → SCC katmanında reddedilmeli
 
 ```bash
-oc create -f root-pod.yaml --as=system:serviceaccount:psa-scc-test:tester-sa
+oc create -f root-pod.yaml --as=system:serviceaccount:sekom-psa-scc-test:tester-sa
 ```
 
 ✅ **Gerçek çıktı (kısaltılmış):**
@@ -72,9 +75,9 @@ Error from server (Forbidden): ... pods "root-test" is forbidden: unable to vali
 ### Test 2: SCC izni verildi (`anyuid`), ama PSA hâlâ `restricted` → PSA katmanında reddedilmeli
 
 ```bash
-oc adm policy add-scc-to-user anyuid -z tester-sa -n psa-scc-test
+oc adm policy add-scc-to-user anyuid -z tester-sa -n sekom-psa-scc-test
 
-oc create -f root-pod.yaml --as=system:serviceaccount:psa-scc-test:tester-sa
+oc create -f root-pod.yaml --as=system:serviceaccount:sekom-psa-scc-test:tester-sa
 ```
 
 ✅ **Gerçek çıktı:**
@@ -90,18 +93,18 @@ runAsUser=0 (container "test" must not set runAsUser=0), seccompProfile ...
 ### Test 3: İkisi de izin veriyor → gerçekten root olarak çalışmalı
 
 ```bash
-oc label namespace psa-scc-test pod-security.kubernetes.io/enforce=baseline --overwrite
+oc label namespace sekom-psa-scc-test pod-security.kubernetes.io/enforce=baseline --overwrite
 
-oc create -f root-pod.yaml --as=system:serviceaccount:psa-scc-test:tester-sa
+oc create -f root-pod.yaml --as=system:serviceaccount:sekom-psa-scc-test:tester-sa
 ```
 
 ✅ **Gerçek çıktı:**
 
 ```bash
-oc logs root-test -n psa-scc-test
+oc logs root-test -n sekom-psa-scc-test
 # uid=0(root) gid=0(root) groups=0(root),10(wheel)
 
-oc get pod root-test -n psa-scc-test -o jsonpath='{.metadata.annotations.openshift\.io/scc}'
+oc get pod root-test -n sekom-psa-scc-test -o jsonpath='{.metadata.annotations.openshift\.io/scc}'
 # anyuid
 ```
 
@@ -115,12 +118,14 @@ oc get pod root-test -n psa-scc-test -o jsonpath='{.metadata.annotations.openshi
 | 2 | `restricted` | `anyuid` verildi | ❌ PSA reddetti |
 | 3 | `baseline` | `anyuid` verildi | ✅ Çalıştı, gerçekten `uid=0` |
 
+✅ **Kontrast testi (neden impersonation şart):** Aynı pod, SA'da `anyuid` **yokken** (namespace `baseline`) cluster-admin kimliğiyle `oc create -f root-pod.yaml` ile oluşturulduğunda **çalıştı**: `uid=0(root)`, `scc=anyuid`. Admin'in kendi SCC yetkisi kısıtlamayı sessizce atladı; SA'nın gerçek yetkisi bu sonucu vermezdi.
+
 **Altın kural:** Bu iki katmandan sadece birini gevşetmek yetmez, güvenlik testlerinde ikisini de ayrı ayrı doğrulayın — ve **asla cluster-admin kimliğiyle test etmeyin**, `--as=system:serviceaccount:<ns>:<sa>` ile gerçek çalışma zamanı kimliğini impersonate edin.
 
 ### Temizlik
 
 ```bash
-oc delete namespace psa-scc-test
+oc delete namespace sekom-psa-scc-test
 ```
 
 ---

@@ -1,0 +1,20 @@
+# allow-ingress-to-frontend.yaml
+# Route üzerinden (OpenShift router / ingress controller) gelen dış trafiğin SADECE frontend'e ulaşmasına izin verir.
+# default-deny-ingress tek başına uygulanırsa Route'tan gelen trafik de kesilir.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-frontend
+  namespace: sekom-microseg-demo
+spec:
+  podSelector:
+    matchLabels: { tier: frontend }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""   # router pod'larının bulunduğu namespace
+      ports:
+        - protocol: TCP
+          port: 8080

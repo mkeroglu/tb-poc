@@ -2,7 +2,7 @@
 
 > [← 07 — Canary Deployment](../../B-UygulamaTeslimi/07-CanaryDeployment/README.md) · [POC akışı](../../README.md) · [09 — Mikro-Segmentasyon →](../09-MicroSegmentation/README.md)
 
-Bu doküman, canlı ortamda (pod içinde, `oc` ile) NetworkPolicy anlatımı yapmak için hazırlanmıştır. Tüm komutlar ve YAML'lar **gerçek bir OpenShift cluster'ında (4.22, OVNKubernetes) uçtan uca test edilmiş**, çıktılar aşağıda gösterildiği gibi doğrulanmıştır. 4 namespace kullanılıyor: `frontend`, `backend`, `other`, `monitoring`.
+Bu doküman, canlı ortamda (pod içinde, `oc` ile) NetworkPolicy anlatımı yapmak için hazırlanmıştır. Tüm komutlar ve YAML'lar Sekom lab ortamında (OpenShift 4.22, OVNKubernetes) **uçtan uca test edilmiş**, çıktılar aşağıda gösterildiği gibi doğrulanmıştır. YAML'lar bu klasörde ayrı dosyalar olarak da bulunur. 4 namespace kullanılıyor: `sekom-np-frontend`, `sekom-np-backend`, `sekom-np-other`, `sekom-np-monitoring`.
 
 Senaryo sırası:
 
@@ -40,31 +40,31 @@ oc get network.config/cluster -o jsonpath='{.status.networkType}'
 4 namespace (OpenShift'te "project") oluşturup her birine bir `team` label'ı veriyoruz — `namespaceSelector` bunu kullanacak.
 
 ```bash
-for ns in np-demo-frontend np-demo-backend np-demo-other np-demo-monitoring; do
+for ns in sekom-np-frontend sekom-np-backend sekom-np-other sekom-np-monitoring; do
   oc new-project "$ns"
 done
 
-oc label namespace np-demo-frontend   team=frontend   --overwrite
-oc label namespace np-demo-backend    team=backend    --overwrite
-oc label namespace np-demo-other      team=other      --overwrite
-oc label namespace np-demo-monitoring team=monitoring --overwrite
+oc label namespace sekom-np-frontend   team=frontend   --overwrite
+oc label namespace sekom-np-backend    team=backend    --overwrite
+oc label namespace sekom-np-other      team=other      --overwrite
+oc label namespace sekom-np-monitoring team=monitoring --overwrite
 ```
 
-`np-demo-backend` içine hedef servisi kuruyoruz. **Not:** standart `nginx` image'ı OpenShift'in restricted SCC'si (rastgele UID) ile `/var/cache/nginx` yazma izni olmadığından çöker; s2i builder image'ları (`ubi9/nginx-124`) da doğrudan çalıştırılabilir bir sunucu değildir, sadece talimat yazdırır. Demo/test amaçlı en sorunsuz yol, arbitrary UID ile sorunsuz çalışan basit bir `busybox httpd`:
+`sekom-np-backend` içine hedef servisi kuruyoruz. **Not:** standart `nginx` image'ı OpenShift'in restricted SCC'si (rastgele UID) ile `/var/cache/nginx` yazma izni olmadığından çöker; s2i builder image'ları (`ubi9/nginx-124`) da doğrudan çalıştırılabilir bir sunucu değildir, sadece talimat yazdırır. Demo/test amaçlı en sorunsuz yol, arbitrary UID ile sorunsuz çalışan basit bir `busybox httpd`:
 
 ```bash
-oc -n np-demo-backend create deployment web --image=busybox:1.36 \
+oc -n sekom-np-backend create deployment web --image=busybox:1.36 \
   -- sh -c "mkdir -p /tmp/www && echo 'backend-ok' > /tmp/www/index.html && httpd -f -p 8080 -h /tmp/www"
 
-oc -n np-demo-backend expose deployment web --port=8080
+oc -n sekom-np-backend expose deployment web --port=8080
 
-oc -n np-demo-backend get pods,svc
+oc -n sekom-np-backend get pods,svc
 ```
 
 Her test namespace'ine bir "client" pod'u açıyoruz:
 
 ```bash
-for ns in np-demo-frontend np-demo-other np-demo-monitoring; do
+for ns in sekom-np-frontend sekom-np-other sekom-np-monitoring; do
   oc -n $ns run tester --image=busybox:1.36 --restart=Never -- sleep 3600
 done
 ```
@@ -72,20 +72,20 @@ done
 **Baseline test (policy yokken hepsi başarılı olmalı):**
 
 ```bash
-for ns in np-demo-frontend np-demo-other np-demo-monitoring; do
+for ns in sekom-np-frontend sekom-np-other sekom-np-monitoring; do
   echo "--- $ns -> backend ---"
-  oc -n $ns exec tester -- wget -qO- --timeout=3 web.np-demo-backend.svc.cluster.local:8080
+  oc -n $ns exec tester -- wget -qO- --timeout=3 web.sekom-np-backend.svc.cluster.local:8080
 done
 ```
 
 ✅ **Gerçek test çıktısı — üçü de erişti:**
 
 ```
---- np-demo-frontend -> backend ---
+--- sekom-np-frontend -> backend ---
 backend-ok
---- np-demo-other -> backend ---
+--- sekom-np-other -> backend ---
 backend-ok
---- np-demo-monitoring -> backend ---
+--- sekom-np-monitoring -> backend ---
 backend-ok
 ```
 
@@ -93,7 +93,7 @@ backend-ok
 
 ## 3. Senaryo 1: Tüm Trafiği Engelle (Default Deny)
 
-`np-demo-backend` namespace'indeki tüm pod'lara gelen tüm ingress trafiğini engelliyoruz.
+`sekom-np-backend` namespace'indeki tüm pod'lara gelen tüm ingress trafiğini engelliyoruz.
 
 ```yaml
 # deny-all-ingress.yaml
@@ -101,7 +101,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-ingress
-  namespace: np-demo-backend
+  namespace: sekom-np-backend
 spec:
   podSelector: {}      # namespace'teki TÜM pod'ları seçer
   policyTypes:
@@ -116,20 +116,20 @@ oc apply -f deny-all-ingress.yaml
 **Test — üçü de başarısız olmalı:**
 
 ```bash
-for ns in np-demo-frontend np-demo-other np-demo-monitoring; do
+for ns in sekom-np-frontend sekom-np-other sekom-np-monitoring; do
   echo "--- $ns -> backend ---"
-  oc -n $ns exec tester -- wget -qO- --timeout=3 web.np-demo-backend.svc.cluster.local:8080
+  oc -n $ns exec tester -- wget -qO- --timeout=3 web.sekom-np-backend.svc.cluster.local:8080
 done
 ```
 
 ✅ **Gerçek test çıktısı:**
 
 ```
---- np-demo-frontend -> backend ---
+--- sekom-np-frontend -> backend ---
 wget: download timed out
---- np-demo-other -> backend ---
+--- sekom-np-other -> backend ---
 wget: download timed out
---- np-demo-monitoring -> backend ---
+--- sekom-np-monitoring -> backend ---
 wget: download timed out
 ```
 
@@ -147,7 +147,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-from-frontend-namespace
-  namespace: np-demo-backend
+  namespace: sekom-np-backend
 spec:
   podSelector: {}
   policyTypes:
@@ -169,11 +169,11 @@ oc apply -f allow-from-frontend-namespace.yaml
 ✅ **Gerçek test çıktısı:**
 
 ```
---- np-demo-frontend -> backend ---
+--- sekom-np-frontend -> backend ---
 backend-ok
---- np-demo-other -> backend ---
+--- sekom-np-other -> backend ---
 wget: download timed out
---- np-demo-monitoring -> backend ---
+--- sekom-np-monitoring -> backend ---
 wget: download timed out
 ```
 
@@ -181,7 +181,7 @@ wget: download timed out
 > ```yaml
 > - namespaceSelector:
 >     matchLabels:
->       kubernetes.io/metadata.name: np-demo-frontend
+>       kubernetes.io/metadata.name: sekom-np-frontend
 > ```
 
 ### 4.1 Additive davranışı canlı göstermek: 4. namespace'i de ekleyelim
@@ -194,7 +194,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-from-monitoring-namespace
-  namespace: np-demo-backend
+  namespace: sekom-np-backend
 spec:
   podSelector: {}
   policyTypes:
@@ -211,17 +211,17 @@ spec:
 
 ```bash
 oc apply -f allow-from-monitoring-namespace.yaml
-oc -n np-demo-backend get networkpolicy
+oc -n sekom-np-backend get networkpolicy
 ```
 
 ✅ **Gerçek test çıktısı (4 namespace'in son durumu):**
 
 ```
---- np-demo-frontend -> backend ---
+--- sekom-np-frontend -> backend ---
 backend-ok
---- np-demo-other -> backend ---
+--- sekom-np-other -> backend ---
 wget: download timed out
---- np-demo-monitoring -> backend ---
+--- sekom-np-monitoring -> backend ---
 backend-ok
 ```
 
@@ -243,7 +243,7 @@ Namespace bazlı izin bazen çok geniştir. Aynı namespace içinde bile sadece 
 Önce `frontend` namespace'ine verilen geniş izni kaldırıp, yerine sadece belirli label'lı pod'a izin veren daha dar bir policy koyuyoruz:
 
 ```bash
-oc -n np-demo-backend delete networkpolicy allow-from-frontend-namespace
+oc -n sekom-np-backend delete networkpolicy allow-from-frontend-namespace
 ```
 
 ```yaml
@@ -252,7 +252,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-from-frontend-app-only
-  namespace: np-demo-backend
+  namespace: sekom-np-backend
 spec:
   podSelector: {}
   policyTypes:
@@ -277,7 +277,7 @@ oc apply -f allow-from-frontend-app-only.yaml
 **Test — label yokken erişim reddedilmeli:**
 
 ```bash
-oc -n np-demo-frontend exec tester -- wget -qO- --timeout=3 web.np-demo-backend.svc.cluster.local:8080
+oc -n sekom-np-frontend exec tester -- wget -qO- --timeout=3 web.sekom-np-backend.svc.cluster.local:8080
 ```
 
 ✅ `wget: download timed out` (beklenen)
@@ -285,8 +285,8 @@ oc -n np-demo-frontend exec tester -- wget -qO- --timeout=3 web.np-demo-backend.
 **Şimdi pod'a doğru label'ı ekleyip tekrar test edelim:**
 
 ```bash
-oc -n np-demo-frontend label pod tester role=api-client
-oc -n np-demo-frontend exec tester -- wget -qO- --timeout=3 web.np-demo-backend.svc.cluster.local:8080
+oc -n sekom-np-frontend label pod tester role=api-client
+oc -n sekom-np-frontend exec tester -- wget -qO- --timeout=3 web.sekom-np-backend.svc.cluster.local:8080
 ```
 
 ✅ **Gerçek test çıktısı:** `backend-ok` — label eklenir eklenmez anında erişim açıldı (canlı demo için çok etkileyici bir an).
@@ -305,12 +305,21 @@ oc -n np-demo-frontend exec tester -- wget -qO- --timeout=3 web.np-demo-backend.
 
 DNS namespace'i OpenShift'te `openshift-dns`, servis 53 numaralı portta dinliyor gibi görünür — ama gerçek pod (CoreDNS) **5353** portunu dinler, Service sadece 53→5353 DNAT'ı yapar. **NetworkPolicy'nin `ports` alanı servisin değil, hedef pod'un gerçek (target/container) portunu eşleştirir.** `port: 53` yazarsanız NetworkPolicy hiçbir zaman gerçek pod'la eşleşmez ve DNS sessizce kırılır.
 
-Gerçek portu böyle doğruladık:
+Gerçek portu böyle doğruladık (`v1 Endpoints` 4.22'de deprecated uyarısı verir; EndpointSlice tercih edilir):
 
 ```bash
-oc get endpoints dns-default -n openshift-dns -o jsonpath='{.subsets[0].ports}'
-# [{"name":"dns-tcp","port":5353,"protocol":"TCP"},{"name":"dns","port":5353,"protocol":"UDP"}]
+oc get endpointslice -n openshift-dns -l kubernetes.io/service-name=dns-default -o jsonpath='{.items[0].ports}'
+# ✅ Gerçek çıktı: dns (UDP) 5353, dns-tcp (TCP) 5353, metrics (TCP) 9154
 ```
+
+✅ **Gerçek çıktı — aynı policy `port: 53` ile yazıldığında:**
+
+```
+nslookup web.sekom-np-backend.svc.cluster.local   ->  ;; connection timed out; no servers could be reached
+wget web.sekom-np-backend.svc.cluster.local:8080  ->  wget: bad address 'web.sekom-np-backend.svc.cluster.local:8080'
+```
+
+Backend'e izin verildiği halde uygulama DNS çözemediği için sessizce kırılır.
 
 ### Doğru (test edilmiş, çalışan) egress policy'si
 
@@ -320,7 +329,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: restrict-egress
-  namespace: np-demo-frontend
+  namespace: sekom-np-frontend
 spec:
   podSelector: {}
   policyTypes:
@@ -351,15 +360,15 @@ oc apply -f restrict-egress-frontend.yaml
 ✅ **Gerçek test çıktısı:**
 
 ```bash
-oc -n np-demo-frontend exec tester -- nslookup web.np-demo-backend.svc.cluster.local
+oc -n sekom-np-frontend exec tester -- nslookup web.sekom-np-backend.svc.cluster.local
 # Server:  172.30.0.10   Address: 172.30.0.10:53
-# Name:    web.np-demo-backend.svc.cluster.local
+# Name:    web.sekom-np-backend.svc.cluster.local
 # Address: 172.30.85.177          <-- DNS çözümü çalışıyor
 
-oc -n np-demo-frontend exec tester -- wget -qO- --timeout=3 web.np-demo-backend.svc.cluster.local:8080
+oc -n sekom-np-frontend exec tester -- wget -qO- --timeout=3 web.sekom-np-backend.svc.cluster.local:8080
 # backend-ok                       <-- backend erişimi çalışıyor
 
-oc -n np-demo-frontend exec tester -- wget -qO- --timeout=3 http://1.1.1.1
+oc -n sekom-np-frontend exec tester -- wget -qO- --timeout=3 http://1.1.1.1
 # timeout                          <-- internet'e çıkış engellendi (beklenen)
 ```
 
@@ -373,16 +382,16 @@ oc -n np-demo-frontend exec tester -- wget -qO- --timeout=3 http://1.1.1.1
 
 ```bash
 # Namespace'teki tüm policy'leri listele
-oc get networkpolicy -n np-demo-backend
+oc get networkpolicy -n sekom-np-backend
 
 # Detay ve seçici bilgisi
-oc describe networkpolicy default-deny-ingress -n np-demo-backend
+oc describe networkpolicy default-deny-ingress -n sekom-np-backend
 
 # Cluster'ın SDN tipini doğrula (OVNKubernetes NetworkPolicy'yi destekler)
 oc get network.config/cluster -o jsonpath='{.status.networkType}'
 
 # Bir servisin GERÇEK hedef portunu bulmak (egress policy yazarken kritik)
-oc get endpoints <servis-adi> -n <namespace> -o jsonpath='{.subsets[0].ports}'
+oc get endpointslice -n <namespace> -l kubernetes.io/service-name=<servis-adi> -o jsonpath='{.items[0].ports}'
 
 # Namespace label'larını kontrol etmek (namespaceSelector hataları için)
 oc get ns <namespace> --show-labels
@@ -393,7 +402,7 @@ oc get ns <namespace> --show-labels
 ## 8. Temizlik
 
 ```bash
-oc delete namespace np-demo-frontend np-demo-backend np-demo-other np-demo-monitoring
+oc delete project sekom-np-frontend sekom-np-backend sekom-np-other sekom-np-monitoring
 ```
 
 ---

@@ -1,0 +1,11 @@
+# deny-all-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: sekom-np-backend
+spec:
+  podSelector: {}      # namespace'teki TÜM pod'ları seçer
+  policyTypes:
+    - Ingress
+  # ingress kuralı tanımlanmadığı için hiçbir trafiğe izin verilmez

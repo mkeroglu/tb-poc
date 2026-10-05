@@ -1,0 +1,88 @@
+# Git webhook'u ile otomatik PipelineRun tetikleme (Tekton Triggers)
+# Akış: Git push -> webhook -> EventListener (Route) -> TriggerBinding -> TriggerTemplate -> PipelineRun
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pipeline-trigger-sa
+---
+# EventListener'ın Trigger kaynaklarını okuyup PipelineRun oluşturabilmesi için gereken yetkiler
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-trigger-sa-eventlistener
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-roles
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-trigger-sa
+---
+# Webhook payload'ından parametreleri çıkarır (GitHub "push" olayı formatı)
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-push-binding
+spec:
+  params:
+    - name: git-url
+      value: $(body.repository.clone_url)
+    - name: git-revision
+      value: $(body.after)
+---
+# Her webhook'ta oluşturulacak PipelineRun şablonu
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: build-and-deploy-template
+spec:
+  params:
+    - name: git-url
+    - name: git-revision
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: build-and-deploy-webhook-
+      spec:
+        pipelineRef:
+          name: build-and-deploy
+        params:
+          - name: git-url
+            value: $(tt.params.git-url)
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: image
+            value: image-registry.openshift-image-registry.svc:5000/REPLACE_ME_NAMESPACE/pipelines-demo:latest
+          - name: deployment-name
+            value: pipelines-demo
+        workspaces:
+          - name: shared-workspace
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: 1Gi
+        taskRunTemplate:
+          serviceAccountName: pipeline
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: build-and-deploy-listener
+spec:
+  serviceAccountName: pipeline-trigger-sa
+  triggers:
+    - name: github-push
+      interceptors:
+        # Sadece "push" olaylarını kabul et; secretRef ile webhook imzası da doğrulanabilir (aşağıya bakın)
+        - ref:
+            name: github
+          params:
+            - name: eventTypes
+              value: ["push"]
+      bindings:
+        - ref: github-push-binding
+      template:
+        ref: build-and-deploy-template

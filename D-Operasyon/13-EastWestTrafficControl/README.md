@@ -4,7 +4,7 @@
 
 Bu doküman, cluster **içindeki servisler arası (east-west/yatay) trafiğin** hem **NetworkPolicy ile kısıtlanmasını** hem de **OVN ACL Logging** ile bu kararların (izin/red) **gerçek log kaydına düşerek gözlemlenmesini** anlatır. [08 — NetworkPolicy](../../C-AgVeGuvenlik/08-NetworkPolicy/README.md) ve [09 — Mikro-Segmentasyon](../../C-AgVeGuvenlik/09-MicroSegmentation/README.md) rehberleri sadece **kısıtlamayı** kanıtlıyordu (bağlantı geçti/geçmedi); burada ayrıca **her bağlantı kararının (allow/drop) kimin tarafından, hangi policy yüzünden, hangi IP/port için verildiğinin** ham log satırı olarak görünür olduğu canlı olarak gösterilmiştir.
 
-Tüm adımlar bu repodaki cluster'da (OpenShift 4.22, **OVNKubernetes**) **`eastwest-demo` namespace'inde canlı test edilmiştir** — gerçek OVN ACL audit log satırları, gerçek pod IP'leriyle birebir eşleştirilerek doğrulanmıştır.
+Tüm adımlar Sekom lab ortamında (OpenShift 4.22, **OVNKubernetes**) **`sekom-eastwest-demo` namespace'inde canlı test edilmiştir** — gerçek OVN ACL audit log satırları, gerçek pod IP'leriyle birebir eşleştirilerek doğrulanmıştır. [12 — Logging](../12-Logging/README.md) kuruluysa aynı kayıtlar Loki'den merkezi olarak da sorgulanabilir (Bölüm 5.1).
 
 Senaryo sırası:
 
@@ -36,13 +36,13 @@ Senaryo sırası:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: eastwest-demo
+  name: sekom-eastwest-demo
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-a-allowed
-  namespace: eastwest-demo
+  namespace: sekom-eastwest-demo
   labels: { role: allowed-source }
 spec:
   replicas: 1
@@ -59,7 +59,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-c-blocked
-  namespace: eastwest-demo
+  namespace: sekom-eastwest-demo
   labels: { role: blocked-source }
 spec:
   replicas: 1
@@ -76,7 +76,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-b-protected
-  namespace: eastwest-demo
+  namespace: sekom-eastwest-demo
   labels: { role: protected-target }
 spec:
   replicas: 1
@@ -92,7 +92,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: app-b, namespace: eastwest-demo }
+metadata: { name: app-b, namespace: sekom-eastwest-demo }
 spec: { selector: { role: protected-target }, ports: [{ port: 8080 }] }
 ```
 
@@ -110,7 +110,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-only-app-a
-  namespace: eastwest-demo
+  namespace: sekom-eastwest-demo
 spec:
   podSelector:
     matchLabels: { role: protected-target }
@@ -131,7 +131,7 @@ oc apply -f allow-only-app-a.yaml
 ACL logging'i **namespace** seviyesinde etkinleştirin (bkz. Bölüm 6 — kritik detay: annotation NetworkPolicy'ye değil, **Namespace**'e yazılır):
 
 ```bash
-oc annotate namespace eastwest-demo \
+oc annotate namespace sekom-eastwest-demo \
   'k8s.ovn.org/acl-logging={"deny":"alert","allow":"notice"}' --overwrite
 ```
 
@@ -144,14 +144,14 @@ oc annotate namespace eastwest-demo \
 ## 4. Trafik Üretme ve Doğrulama (Bağlantı Seviyesi)
 
 ```bash
-A_POD=$(oc get pod -n eastwest-demo -l role=allowed-source -o jsonpath='{.items[0].metadata.name}')
-C_POD=$(oc get pod -n eastwest-demo -l role=blocked-source -o jsonpath='{.items[0].metadata.name}')
+A_POD=$(oc get pod -n sekom-eastwest-demo -l role=allowed-source -o jsonpath='{.items[0].metadata.name}')
+C_POD=$(oc get pod -n sekom-eastwest-demo -l role=blocked-source -o jsonpath='{.items[0].metadata.name}')
 
 echo "app-a -> app-b (izinli olmali):"
-oc exec "$A_POD" -n eastwest-demo -- wget -qO- --timeout=3 app-b.eastwest-demo.svc.cluster.local:8080
+oc exec "$A_POD" -n sekom-eastwest-demo -- wget -qO- --timeout=3 app-b.sekom-eastwest-demo.svc.cluster.local:8080
 
 echo "app-c -> app-b (engellenmeli):"
-oc exec "$C_POD" -n eastwest-demo -- wget -qO- --timeout=3 app-b.eastwest-demo.svc.cluster.local:8080
+oc exec "$C_POD" -n sekom-eastwest-demo -- wget -qO- --timeout=3 app-b.sekom-eastwest-demo.svc.cluster.local:8080
 ```
 
 ✅ **Gerçek çıktı:**
@@ -174,47 +174,60 @@ Buraya kadar [08 — NetworkPolicy](../../C-AgVeGuvenlik/08-NetworkPolicy/README
 Kararların gerçekten **loglandığını** node üzerinde doğrulayın (`app-b`'nin çalıştığı node'da):
 
 ```bash
-NODE=$(oc get pod -n eastwest-demo -l role=protected-target -o jsonpath='{.items[0].spec.nodeName}')
-oc debug node/$NODE -- chroot /host tail -n 20 /var/log/ovn/acl-audit-log.log
+NODE=$(oc get pod -n sekom-eastwest-demo -l role=protected-target -o jsonpath='{.items[0].spec.nodeName}')
+oc debug node/$NODE --to-namespace=default -- chroot /host grep sekom-eastwest-demo /var/log/ovn/acl-audit-log.log | tail -n 20
 ```
 
-✅ **Gerçek çıktı** (pod IP'leriyle birebir eşleşiyor — `app-a=10.131.3.96`, `app-c=10.131.3.97`, `app-b=10.131.3.98`):
+✅ **Gerçek çıktı** (pod IP'leriyle birebir eşleşiyor — `app-a=...96`, `app-c=...97`, `app-b=...98`; ikinci test turunda `.179/.180/.181` ile aynı sonuç):
 
 ```
-...|INFO|name="NP:eastwest-demo:allow-only-app-a:Ingress:0", verdict=allow, severity=notice, direction=to-lport:
+...|INFO|name="NP:sekom-eastwest-demo:allow-only-app-a:Ingress:0", verdict=allow, severity=notice, direction=to-lport:
     tcp,...,nw_src=10.131.3.96,nw_dst=10.131.3.98,...,tp_src=39036,tp_dst=8080,tcp_flags=syn
-...|INFO|name="NP:eastwest-demo:allow-only-app-a:Ingress:0", verdict=allow, severity=notice, direction=to-lport:
+...|INFO|name="NP:sekom-eastwest-demo:allow-only-app-a:Ingress:0", verdict=allow, severity=notice, direction=to-lport:
     tcp,...,nw_src=10.131.3.96,nw_dst=10.131.3.98,...,tcp_flags=ack
-...|INFO|name="NP:eastwest-demo:allow-only-app-a:Ingress:0", verdict=allow, severity=notice, direction=to-lport:
+...|INFO|name="NP:sekom-eastwest-demo:allow-only-app-a:Ingress:0", verdict=allow, severity=notice, direction=to-lport:
     tcp,...,nw_src=10.131.3.96,nw_dst=10.131.3.98,...,tcp_flags=psh|ack
 ...
-...|INFO|name="NP:eastwest-demo:Ingress", verdict=drop, severity=alert, direction=to-lport:
+...|INFO|name="NP:sekom-eastwest-demo:Ingress", verdict=drop, severity=alert, direction=to-lport:
     tcp,...,nw_src=10.131.3.97,nw_dst=10.131.3.98,...,tp_src=60386,tp_dst=8080,tcp_flags=syn
-...|INFO|name="NP:eastwest-demo:Ingress", verdict=drop, severity=alert, direction=to-lport:
+...|INFO|name="NP:sekom-eastwest-demo:Ingress", verdict=drop, severity=alert, direction=to-lport:
     tcp,...,nw_src=10.131.3.97,nw_dst=10.131.3.98,...,tcp_flags=syn
 ```
 
 **Yorumu:**
 
-- İlk grup (`verdict=allow`, `severity=notice`, ACL adı `NP:eastwest-demo:allow-only-app-a:Ingress:0`): `app-a`'nın (`.96`) `app-b`'ye (`.98`) TCP handshake'inin **tamamı** (syn → ack → psh|ack → ack → fin|ack) — hangi NetworkPolicy'nin izin verdiği isimle birlikte görünüyor.
-- İkinci grup (`verdict=drop`, `severity=alert`, ACL adı `NP:eastwest-demo:Ingress` — genel/implicit default-deny): `app-c`'nin (`.97`) `app-b`'ye ulaşmaya çalışan **her SYN paketi tek tek reddedilip loglanıyor** (istemcinin tekrar tekrar denemesi TCP retransmisyonu olarak görünüyor).
+- İlk grup (`verdict=allow`, `severity=notice`, ACL adı `NP:sekom-eastwest-demo:allow-only-app-a:Ingress:0`): `app-a`'nın (`.96`) `app-b`'ye (`.98`) TCP handshake'inin **tamamı** (syn → ack → psh|ack → ack → fin|ack) — hangi NetworkPolicy'nin izin verdiği isimle birlikte görünüyor.
+- İkinci grup (`verdict=drop`, `severity=alert`, ACL adı `NP:sekom-eastwest-demo:Ingress` — genel/implicit default-deny): `app-c`'nin (`.97`) `app-b`'ye ulaşmaya çalışan **her SYN paketi tek tek reddedilip loglanıyor** (istemcinin tekrar tekrar denemesi TCP retransmisyonu olarak görünüyor).
 
 **Bu, "gözlemlenir" gereksinimini tam olarak karşılıyor:** sadece "bağlantı koptu" demiyoruz, **kimin (kaynak IP), ne zamandan beri, hangi policy'ye takıldığını** ham log satırından okuyabiliyoruz.
 
-> **İleri adım (bu POC'de canlı bağlanmadı):** Bu log dosyası (`/var/log/ovn/acl-audit-log.log`) OpenShift Logging'in **`infrastructure`** log tipi kapsamındadır. [12 — Logging](../12-Logging/README.md) rehberinde kurduğumuz `ClusterLogForwarder`'a bir `infrastructure` input eklenirse, bu ACL kayıtları da merkezi olarak Loki'ye akıp orada sorgulanabilir/alarm kurulabilir hale gelir — node'a tek tek `oc debug` ile bakmak yerine.
+### 5.1 Merkezi gözlem: ACL kayıtlarını Loki'den sorgulamak
+
+OVN ACL audit logları OpenShift Logging'de **`audit`** log tipinin parçasıdır (`infrastructure` değil). [12 — Logging](../12-Logging/README.md) rehberindeki `ClusterLogForwarder` `audit` girdisini zaten topladığı için **ek bir ayar gerekmeden** Loki'ye akarlar:
+
+```bash
+TOKEN=$(oc create token log-reader -n openshift-logging --duration=1h)
+ROUTE=$(oc get route logging-loki -n openshift-logging -o jsonpath='https://{.spec.host}')
+curl -sk -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode 'query={log_type="audit"} |= "NP:sekom-eastwest-demo"' \
+  --data-urlencode "start=$(($(date +%s)-1800))000000000" --data-urlencode "end=$(date +%s)000000000" \
+  "$ROUTE/api/logs/v1/audit/loki/api/v1/query_range"
+```
+
+✅ **Gerçek çıktı:** Bu namespace için **7 kayıt** (5 `verdict=allow`, 2 `verdict=drop`); node'daki dosyayla aynı. Stream etiketleri: `log_type=audit`, `k8s_node_name=<node>`. Bu kayıtlarda `log_source` etiketi **yoktur**; ACL kayıtlarını ayırmak için `|= "NP:<namespace>"` ya da `|= "verdict=drop"` gibi metin filtreleri kullanılır. Böylece node'lara tek tek `oc debug` ile bakmadan, tüm cluster'daki reddedilen east-west trafik tek sorguyla izlenebilir ve üzerine alarm kurulabilir.
 
 ---
 
 ## 6. Gerçek Tuzak: Annotation'ın Doğru Yere Yazılması
 
-İlk denemede `k8s.ovn.org/acl-logging` annotation'ını **NetworkPolicy** objesinin üzerine yazdık — bu **sessizce hiçbir etki yapmadı**, log dosyası `0` satır olarak kaldı (hata mesajı yok, sadece hiçbir şey loglanmadı). Doğrusu: annotation **Namespace** objesine yazılmalı:
+İlk denemede `k8s.ovn.org/acl-logging` annotation'ını **NetworkPolicy** objesinin üzerine yazdık — bu **sessizce hiçbir etki yapmadı**: kısıtlama çalıştı (`app-c` engellendi) ama node'daki log dosyasında bu namespace için **0** satır vardı (✅ ikinci test turunda da aynı sonuç; hata mesajı yok). Doğrusu: annotation **Namespace** objesine yazılmalı:
 
 ```bash
 # YANLIŞ (etkisiz, hata da vermez):
-oc annotate networkpolicy allow-only-app-a -n eastwest-demo 'k8s.ovn.org/acl-logging=...'
+oc annotate networkpolicy allow-only-app-a -n sekom-eastwest-demo 'k8s.ovn.org/acl-logging=...'
 
 # DOĞRU:
-oc annotate namespace eastwest-demo 'k8s.ovn.org/acl-logging=...'
+oc annotate namespace sekom-eastwest-demo 'k8s.ovn.org/acl-logging=...'
 ```
 
 Bu, sessizce hiçbir uyarı vermediği için tespit edilmesi zor bir tuzak — dosyanın gerçekten dolduğunu (`wc -l`) doğrulamadan "loglama açık" varsaymayın.
@@ -224,7 +237,7 @@ Bu, sessizce hiçbir uyarı vermediği için tespit edilmesi zor bir tuzak — d
 ## 7. Temizlik
 
 ```bash
-oc delete namespace eastwest-demo
+oc delete project sekom-eastwest-demo
 ```
 
 ---
@@ -236,10 +249,10 @@ oc delete namespace eastwest-demo
 | `NetworkPolicy` | East-west trafiği **kısıtlar** (izin/red kararı) |
 | `Namespace` annotation `k8s.ovn.org/acl-logging` | O namespace'teki tüm NetworkPolicy/EgressFirewall kararlarının **loglanmasını** açar |
 | `/var/log/ovn/acl-audit-log.log` (node üzerinde) | Her allow/drop kararının ham kaydı — kaynak/hedef IP, port, TCP bayrağı, hangi policy |
-| *(opsiyonel, bu POC'de bağlanmadı)* `ClusterLogForwarder` infrastructure input | Bu logları merkezi Loki'ye taşır — bkz. [12 — Logging](../12-Logging/README.md) |
+| `ClusterLogForwarder` **audit** input | Bu logları merkezi Loki'ye taşır (ek ayar gerekmez) — bkz. [12 — Logging](../12-Logging/README.md) |
 
 **Altın kurallar:**
 1. ACL logging annotation'ı **Namespace**'e yazılır, NetworkPolicy'ye değil — yanlış yere yazmak sessizce hiçbir şey yapmaz.
 2. `deny`/`allow` severity'leri **ayrı ayrı** ayarlanır — genelde `deny: alert` (dikkat çekmesi gereken, beklenmedik reddedilen trafik) + `allow: notice`/`info` (normal, hacimli trafik için daha düşük öncelik) mantıklı bir varsayılan.
-3. Loglar node'un yerel dosya sistemindedir (`/var/log/ovn/acl-audit-log.log`) — merkezi/sorgulanabilir gözlem için bunları [12 — Logging](../12-Logging/README.md)'deki `infrastructure` log tipiyle Loki'ye yönlendirmek gerekir.
+3. Loglar node'un yerel dosya sistemindedir (`/var/log/ovn/acl-audit-log.log`); [12 — Logging](../12-Logging/README.md)'deki ClusterLogForwarder **`audit`** girdisi bunları otomatik olarak Loki'ye taşır.
 4. Kısıtlama (NetworkPolicy) ile gözlemleme (ACL logging) **birbirinden bağımsız** açılıp kapatılan iki ayrı mekanizmadır — biri diğerini otomatik getirmez.

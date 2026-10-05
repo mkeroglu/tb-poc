@@ -2,7 +2,7 @@
 
 > [← 05 — CI/CD](../05-Ci-Cd/README.md) · [POC akışı](../../README.md) · [07 — Canary Deployment →](../07-CanaryDeployment/README.md)
 
-Bu doküman, OpenShift üzerinde **Blue/Green deployment** stratejisini anlatır. Bu, [05 — CI/CD](../05-Ci-Cd/README.md) bölümündeki pipeline otomasyonunun bir devamı/alternatifi olarak düşünülebilir — orada `oc rollout restart` ile tek bir Deployment'ı yerinde (rolling) güncelliyorduk, burada **iki bağımsız ortamı** aynı anda ayakta tutup aralarında anlık geçiş yapıyoruz. Tüm adımlar bu repodaki cluster'da (OpenShift 4.22) **`bg-demo` namespace'inde canlı test edilmiştir**.
+Bu doküman, OpenShift üzerinde **Blue/Green deployment** stratejisini anlatır. Bu, [05 — CI/CD](../05-Ci-Cd/README.md) bölümündeki pipeline otomasyonunun bir devamı/alternatifi olarak düşünülebilir — orada `oc rollout restart` ile tek bir Deployment'ı yerinde (rolling) güncelliyorduk, burada **iki bağımsız ortamı** aynı anda ayakta tutup aralarında anlık geçiş yapıyoruz. Tüm adımlar Sekom lab ortamında (OpenShift 4.22) **`sekom-bg-demo` namespace'inde canlı test edilmiştir**. Manifestlerin tamamı `blue-green-demo.yaml` dosyasındadır.
 
 Senaryo sırası:
 
@@ -29,13 +29,13 @@ Blue/Green deployment'ta **iki ayrı, tamamen bağımsız** ortam (Deployment) a
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: bg-demo
+  name: sekom-bg-demo
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-blue
-  namespace: bg-demo
+  namespace: sekom-bg-demo
   labels:
     app: demo-app
     version: blue
@@ -62,7 +62,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-green
-  namespace: bg-demo
+  namespace: sekom-bg-demo
   labels:
     app: demo-app
     version: green
@@ -89,7 +89,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: demo-app
-  namespace: bg-demo
+  namespace: sekom-bg-demo
 spec:
   selector:
     app: demo-app
@@ -102,7 +102,7 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: demo-app
-  namespace: bg-demo
+  namespace: sekom-bg-demo
 spec:
   to:
     kind: Service
@@ -113,7 +113,7 @@ spec:
 
 ```bash
 oc apply -f blue-green-demo.yaml
-oc get deployment -n bg-demo
+oc get deployment -n sekom-bg-demo
 ```
 
 ✅ **Gerçek çıktı:** `app-blue` ve `app-green` her ikisi de `2/2 READY` — iki ortam **aynı anda** ayakta, sadece Service'in seçtiği hangisiyse o trafik alıyor.
@@ -125,7 +125,7 @@ oc get deployment -n bg-demo
 **a) Başlangıç durumu — Service Blue'yu seçiyor:**
 
 ```bash
-HOST=$(oc get route demo-app -n bg-demo -o jsonpath='{.spec.host}')
+HOST=$(oc get route demo-app -n sekom-bg-demo -o jsonpath='{.spec.host}')
 curl -s "http://$HOST"
 ```
 
@@ -134,7 +134,7 @@ curl -s "http://$HOST"
 **b) Switch — Service selector'ını Green'e çevir:**
 
 ```bash
-oc patch service demo-app -n bg-demo --type merge \
+oc patch service demo-app -n sekom-bg-demo --type merge \
   -p '{"spec":{"selector":{"app":"demo-app","version":"green"}}}'
 ```
 
@@ -142,22 +142,31 @@ oc patch service demo-app -n bg-demo --type merge \
 for i in 1 2 3 4 5; do curl -s "http://$HOST"; echo; done
 ```
 
-✅ **Gerçek çıktı:** switch'ten **hemen sonraki** birkaç istek hâlâ `BLUE` döndü, **~5 saniye sonra** hepsi `GREEN`'e geçti (bkz. Bölüm 4).
+✅ **Gerçek çıktı:** Switch sonrasında 0,1–0,2 sn aralıkla gönderilen isteklerle ölçülen, ilk `GREEN` cevabına kadar geçen süre (4 tur):
+
+| Tur | Blue → Green | Green → Blue (rollback) | Hatalı/boş cevap |
+|---|---|---|---|
+| 1 | 1,67 sn | 2,36 sn | 0 |
+| 2 | 0,25 sn | 0,14 sn | 0 |
+| 3 | 0,25 sn | 0,14 sn | 0 |
+| 4 | 0,25 sn | 4,02 sn | 0 |
+
+Geçiş sırasında **hiçbir istek hata vermedi**; geçiş anına kadar eski sürüm, sonrasında yeni sürüm cevap verdi. Süre ise sabit değil (bkz. Bölüm 4).
 
 **c) Rollback — anında Blue'ya geri dön:**
 
 ```bash
-oc patch service demo-app -n bg-demo --type merge \
+oc patch service demo-app -n sekom-bg-demo --type merge \
   -p '{"spec":{"selector":{"app":"demo-app","version":"blue"}}}'
 ```
 
-✅ **Gerçek çıktı:** rollback, ileri switch'ten daha hızlı gerçekleşti (~1-2 saniye içinde `BLUE`'ya döndü) — yeniden deploy/build gerekmeden, tek bir `oc patch` ile.
+✅ **Gerçek çıktı:** Rollback da yeniden deploy/build gerekmeden, tek bir `oc patch` ile 0,14–4 sn içinde tamamlandı (yukarıdaki tablo).
 
 ---
 
 ## 4. Gerçek Tuzak: Router Gecikmesi
 
-Switch anında değil — OpenShift router'ının (HAProxy) yeni `Endpoints`'i alıp backend havuzunu güncellemesi **anlık değil**, canlı testte **~5 saniyelik** bir gecikme gözlendi. Kök neden bug değil, router'ın endpoint değişikliklerini yakalayıp HAProxy config'ini reload etmesinin doğal (küçük) gecikmesi.
+Switch anında değil — OpenShift router'ının (HAProxy) yeni `Endpoints`'i alıp backend havuzunu güncellemesi **anlık değil** ve **değişken**: canlı testlerde 0,14 sn ile 4 sn arasında ölçüldü (önceki bir test turunda ~5 sn de görüldü). Kök neden bug değil, router'ın endpoint değişikliklerini yakalayıp HAProxy config'ini reload etmesinin doğal (küçük) gecikmesi.
 
 **Pratik sonuç:** Blue/Green switch'ini "tamamlandı" saymadan önce, gerçekten tüm trafiğin yeni versiyona geçtiğini birkaç saniye arayla tekrar test ederek doğrulayın — özellikle otomasyonda (CI/CD script'i) switch sonrası sabit bir bekleme payı (`sleep`) bırakıp ardından doğrulama yapın, "patch komutu döndü = trafik geçti" varsayımıyla hemen ilerlemeyin.
 
@@ -166,7 +175,7 @@ Switch anında değil — OpenShift router'ının (HAProxy) yeni `Endpoints`'i a
 ## 5. Temizlik
 
 ```bash
-oc delete namespace bg-demo
+oc delete namespace sekom-bg-demo
 ```
 
 ---

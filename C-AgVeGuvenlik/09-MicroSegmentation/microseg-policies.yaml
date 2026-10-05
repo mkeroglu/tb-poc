@@ -1,0 +1,44 @@
+# microseg-policies.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: sekom-microseg-demo
+spec:
+  podSelector: {}          # namespace'teki TÜM pod'lar
+  policyTypes: [Ingress]
+  # ingress kuralı yok -> hiçbir trafiğe izin verilmez (varsayılan red)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: sekom-microseg-demo
+spec:
+  podSelector:
+    matchLabels: { tier: backend }     # bu kural SADECE backend pod'larını korur
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { tier: frontend }   # SADECE frontend'den
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-database
+  namespace: sekom-microseg-demo
+spec:
+  podSelector:
+    matchLabels: { tier: database }    # bu kural SADECE database pod'larını korur
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { tier: backend }    # SADECE backend'den
+      ports:
+        - protocol: TCP
+          port: 8080

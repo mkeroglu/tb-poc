@@ -2,7 +2,7 @@
 
 > [← 09 — Mikro-Segmentasyon](../09-MicroSegmentation/README.md) · [POC akışı](../../README.md) · [11 — Güvenlik Testleri →](../11-SecurityTests/README.md)
 
-Bu doküman, bir pod'a **ikinci bir ağ arayüzü** (gerçek LAN'dan, node'un fiziksel ağıyla aynı segmentten bir IP alan) eklemek için Multus CNI + macvlan kullanımını anlatır. Tüm adımlar bu repodaki cluster'da (OpenShift 4.22, **OVNKubernetes**, node'lar VMware VM) **`sekom-ocp-poc` namespace'inde, gerçek LAN'da (`10.134.151.0/24`) uçtan uca canlı test edilmiştir** — kullanılan IP bloğu (`10.134.151.241-245`) canlıya geçmeden önce ARP tablosu + `arping` ile taranıp boş olduğu doğrulanmıştır.
+Bu doküman, bir pod'a **ikinci bir ağ arayüzü** (gerçek LAN'dan, node'un fiziksel ağıyla aynı segmentten bir IP alan) eklemek için Multus CNI + macvlan kullanımını anlatır. Tüm adımlar Sekom lab ortamında (OpenShift 4.22, **OVNKubernetes**, bare-metal worker'lar) **`sekom-ocp-poc` namespace'inde, node'ların bulunduğu gerçek LAN'da uçtan uca canlı test edilmiştir**. Kullanılan IP bloğu canlıya geçmeden önce `arping` ile taranıp boş olduğu doğrulanmıştır. Çıktılarda lab ağının adresleri `<LAN>.241` gibi kısaltılmıştır (`<LAN>` = node'ların /24 subnet'i, `<UZAK>` = router arkasındaki başka bir subnet).
 
 Senaryo sırası:
 
@@ -10,9 +10,10 @@ Senaryo sırası:
 2. Ön koşul kontrolü (Multus zaten aktif mi, hangi node interface'i kullanılacak)
 3. `NetworkAttachmentDefinition` oluşturma (macvlan + whereabouts IPAM)
 4. Pod'u ikinci arayüzle çalıştırma
-5. Doğrulama
-6. Bilinen sınırlamalar / sık yapılan hatalar
-7. Temizlik
+5. Doğrulama (aynı node, farklı node)
+6. Farklı subnet'ten (router arkasından) erişim — `rp_filter` ve çözümü
+7. Bilinen sınırlamalar / sık yapılan hatalar
+8. Temizlik
 
 ---
 
@@ -90,27 +91,38 @@ spec:
     }
 ```
 
-Doldurulması gerekenler (ağ ekibinden teyit alın — **gerçek LAN'da kullanılmayan** bir bloktur, aksi halde IP çakışması olur). Bu clusterda kullanılan gerçek değerler:
+Doldurulması gerekenler (ağ ekibinden teyit alın — **gerçek LAN'da kullanılmayan ve DHCP havuzunda olmayan** bir bloktur, aksi halde IP çakışması olur):
 
-| Placeholder | Bu POC'de kullanılan değer |
-|---|---|
-| `REPLACE_ME_NAMESPACE` | `sekom-ocp-poc` |
-| `REPLACE_ME_CIDR` | `10.134.151.0/24` |
-| `REPLACE_ME_IP_START` / `REPLACE_ME_IP_END` | `10.134.151.241` – `10.134.151.245` |
-| `REPLACE_ME_GATEWAY` | `10.134.151.1` |
+| Placeholder | Anlamı | Lab testinde |
+|---|---|---|
+| `REPLACE_ME_NAMESPACE` | Pod'ların namespace'i | `sekom-ocp-poc` |
+| `REPLACE_ME_CIDR` | Node'ların (br-ex) bulunduğu LAN subnet'i | `<LAN>.0/24` |
+| `REPLACE_ME_IP_START` / `REPLACE_ME_IP_END` | Pod'lara verilecek, LAN'da boş blok | `<LAN>.241` – `<LAN>.245` |
+| `REPLACE_ME_GATEWAY` | LAN'ın default gateway'i | `<LAN>.1` |
+
+```bash
+# Kolay doldurma örneği:
+sed -e 's/REPLACE_ME_NAMESPACE/sekom-ocp-poc/' -e 's#REPLACE_ME_CIDR#192.168.10.0/24#' \
+    -e 's/REPLACE_ME_IP_START/192.168.10.241/' -e 's/REPLACE_ME_IP_END/192.168.10.245/' \
+    -e 's/REPLACE_ME_GATEWAY/192.168.10.1/' macvlan-nad.yaml | oc apply -f -
+```
 
 **IP bloğunu canlıya geçmeden önce boş olduğunu doğrulama** (ICMP tek başına yetmez, cihaz kapalı olabilir — L2 seviyesinde ARP tablosu + `arping` daha güvenilir):
 
 ```bash
 # Node üzerinden mevcut ARP tablosunu kontrol et
-oc debug node/<node-adi> -- chroot /host ip neigh show dev br-ex
+oc debug node/<node-adi> --to-namespace=default -- chroot /host ip neigh show dev br-ex
 
 # Aday aralığı arping ile L2 seviyesinde sorgula (cevap yoksa boş kabul edilir)
-oc debug node/<node-adi> -- chroot /host bash -c '
+oc debug node/<node-adi> --to-namespace=default -- chroot /host bash -c '
 for i in $(seq 241 245); do
-  arping -c1 -w1 -I br-ex 10.134.151.$i
+  echo "<LAN>.$i -> $(arping -c2 -w2 -I br-ex <LAN>.$i | grep -ci "reply from") cevap"
 done'
 ```
+
+✅ **Gerçek çıktı:** Beş adayın beşi için de `0 cevap` → blok boş.
+
+> `--to-namespace=default`: `oc debug node` varsayılanda mevcut proje namespace'inde geçici bir pod açar. O namespace silinmişse `unable to get namespace` hatası verir; namespace'i açıkça vermek bunu önler.
 
 ```bash
 oc apply -f macvlan-nad.yaml
@@ -149,6 +161,8 @@ oc wait --for=condition=Ready pod/macvlan-test -n REPLACE_ME_NAMESPACE --timeout
 
 ## 5. Doğrulama (gerçek test çıktıları)
 
+Testte iki pod **farklı node'lara** (`spec.nodeName`) yerleştirildi; böylece pod'lar arası trafik fiziksel LAN/switch üzerinden geçti.
+
 **a) Pod'a atanan ek arayüz ve IP:**
 
 ```bash
@@ -158,59 +172,103 @@ oc exec -n sekom-ocp-poc macvlan-test -- ip addr show net1
 ✅ **Gerçek çıktı:**
 
 ```
-3: net1@if11: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1500 ...
-    link/ether 8e:bc:bb:b6:d9:47 brd ff:ff:ff:ff:ff:ff
-    inet 10.134.151.241/24 brd 10.134.151.255 scope global net1
+3: net1@if14: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1500 qdisc noqueue qlen 1000
+    link/ether ce:0a:ab:f9:29:0f brd ff:ff:ff:ff:ff:ff
+    inet <LAN>.241/24 brd <LAN>.255 scope global net1
 ```
 
-`eth0` cluster (OVN, `10.131.x.x`) IP'sini taşımaya devam ediyor; `net1` whereabouts'tan gelen gerçek LAN IP'sini taşıyor — iki arayüz bir arada, biri diğerinin yerini almıyor.
+| Pod | Node | `eth0` (OVN) | `net1` (macvlan/LAN) |
+|---|---|---|---|
+| `macvlan-test` | worker-A | `10.129.x.x` | `<LAN>.241/24` |
+| `macvlan-test-2` | worker-B | `10.131.x.x` | `<LAN>.242/24` |
 
-**b) Aynı NAD'a bağlı iki pod'un (aynı node üzerinde) macvlan üzerinden birbirine ulaşması:**
+`eth0` cluster (OVN) IP'sini taşımaya devam ediyor; `net1` whereabouts'tan gelen gerçek LAN IP'sini taşıyor — iki arayüz bir arada, biri diğerinin yerini almıyor. Pod'un **default route'u `eth0`'da** kalır; `net1` sadece kendi subnet'i için bir route ekler.
+
+**b) Aynı NAD'a bağlı iki pod'un (farklı node'larda) macvlan üzerinden birbirine ulaşması:**
 
 ```bash
-oc exec -n sekom-ocp-poc macvlan-test-2 -- sh -c "nc -l -p 5000 > /tmp/out.txt &"
-oc exec -n sekom-ocp-poc macvlan-test   -- sh -c "echo hello | nc -w3 10.134.151.242 5000"
+# Dinleyiciyi arka planda başlat (çıktılar yönlendirilmezse oc exec oturumu kapanmaz ve komut takılır)
+oc exec -n sekom-ocp-poc macvlan-test-2 -- sh -c "nc -l -p 5000 > /tmp/out.txt 2>/dev/null </dev/null &"
+oc exec -n sekom-ocp-poc macvlan-test   -- sh -c "echo hello | nc -w3 <macvlan-test-2 net1 IP> 5000"
 oc exec -n sekom-ocp-poc macvlan-test-2 -- cat /tmp/out.txt
 ```
 
-✅ **Gerçek çıktı:** `hello` — pod1 → pod2 macvlan üzerinden (`10.134.151.241` → `10.134.151.242`) TCP ile başarıyla iletişim kurdu.
+✅ **Gerçek çıktı:** `hello-capraz-node` — farklı node'lardaki iki pod (`<LAN>.241` → `<LAN>.242`) fiziksel LAN üzerinden TCP ile iletişim kurdu. (Önceki bir test turunda aynı node üzerindeki iki pod da sorunsuz konuştu.)
 
 > **Not:** busybox'ın `ping`'i bu SCC altında `permission denied (are you root?)` veriyor (ICMP raw socket, restricted SCC'de kapalı) — bağlantı testini `nc` (TCP) ile yapın.
 
 ---
 
-## 6. Bilinen Sınırlamalar / Sık Yapılan Hatalar (canlı testte doğrulanmış)
+## 6. Farklı Subnet'ten (Router Arkasından) Erişim — `rp_filter` ve Çözümü
+
+Aynı LAN'daki cihazlar pod'un `net1` IP'sine sorunsuz erişir. Ama **router arkasındaki başka bir subnet'ten** gelen istekler varsayılanda **cevapsız kalır**.
+
+✅ **Gerçek çıktı (sorun):** `<UZAK>` subnet'indeki bir sunucudan `nc <LAN>.241 6000` → `Ncat: TIMEOUT`. Pod'da `cat /proc/sys/net/ipv4/conf/net1/rp_filter` → `1`.
+
+**Kök neden:** Pod'un default route'u `eth0` (OVN) üzerindedir. `<UZAK>`'tan `net1`'e gelen paketin cevabı `eth0`'dan gitmek zorunda kalır; `rp_filter=1` (strict reverse-path filtering) bu asimetriyi görüp paketi **sessizce düşürür**.
+
+### Çözüm (önerilen): IPAM'e route eklemek — node değişikliği gerektirmez
+
+Pod'a "`<UZAK>` subnet'ine `net1`'in gateway'i üzerinden git" route'u verilir. Böylece gelen paket ile cevap aynı arayüzü kullanır ve `rp_filter` paketi kabul eder. `macvlan-nad-routed.yaml`:
+
+```json
+"ipam": {
+  "type": "whereabouts",
+  "range": "REPLACE_ME_CIDR",
+  "range_start": "REPLACE_ME_IP_START",
+  "range_end": "REPLACE_ME_IP_END",
+  "gateway": "REPLACE_ME_GATEWAY",
+  "routes": [
+    { "dst": "REPLACE_ME_REMOTE_CIDR", "gw": "REPLACE_ME_GATEWAY" }
+  ]
+}
+```
+
+`REPLACE_ME_REMOTE_CIDR`: pod'a erişecek istemcilerin bulunduğu subnet(ler). Birden fazla subnet için listeye yeni satırlar eklenir; kurumun tüm iç ağı için örn. `10.0.0.0/8` verilebilir.
+
+```bash
+oc apply -f <doldurulmuş macvlan-nad-routed.yaml>
+# Pod annotation'ı: k8s.v1.cni.cncf.io/networks: macvlan-lan-routed  (pod yeniden oluşturulmalı)
+oc exec -n sekom-ocp-poc macvlan-test -- ip route
+```
+
+✅ **Gerçek çıktı (çözüm):**
+
+```
+default via 10.129.2.1 dev eth0
+<UZAK>.0/24 via <LAN>.1 dev net1            <-- IPAM'den gelen route
+<LAN>.0/24 dev net1 scope link src <LAN>.241
+```
+
+`<UZAK>` subnet'indeki sunucudan: `nc <LAN>.241 6000` → **`pod1-cevap`**, `ping <LAN>.241` → **`3 packets transmitted, 3 received, 0% packet loss`**. Node'lara dokunulmadı, reboot gerekmedi.
+
+### Alternatifler (önerilmez)
+
+- **`tuning` CNI plugin ile `rp_filter`'ı gevşetmek:** OpenShift bunu admission seviyesinde engeller; pod `ContainerCreating`'de kalır:
+  ```
+  plugin type="tuning" failed (add): Sysctl net.ipv4.conf.IFNAME.rp_filter is not allowed.
+  Only the following sysctls are allowed: [^net.ipv4.conf.IFNAME.accept_redirects$ ...]
+  ```
+- **MachineConfig ile node genelinde `net.ipv4.conf.default.rp_filter=2`:** Çalışır, ama MCO ilgili node'ları sırayla **reboot** eder ve o node'daki bütün pod'ları etkiler. Platform ekibinin onayı gerekir; yukarıdaki route çözümü varken gerek yoktur.
+
+---
+
+## 7. Bilinen Sınırlamalar / Sık Yapılan Hatalar (canlı testte doğrulanmış)
 
 - **`eno1` değil `br-ex` — OVNKubernetes'e özgü tuzak:** Bu cluster'da birincil fiziksel NIC OVS `br-ex` bridge'ine enslave edilmiş durumda. Master olarak doğrudan fiziksel NIC adını (`eno1`) verirseniz NAD **oluşur ama** pod'un macvlan arayüzü ya hiç trafik göremez ya da beklenmedik şekilde davranır. **Her zaman `br-ex`'i master olarak kullanın.**
 
-- **⚠️ Gerçek LAN'dan (farklı subnet/router arkasından) pod'a inbound erişim, varsayılan olarak ÇALIŞMAZ — `rp_filter` tuzağı:** Aynı node üzerindeki iki macvlan pod'u (yukarıdaki gibi aynı subnette) sorunsuz konuşur, ama **farklı bir subnetten** (bu POC'de: bu dokümanı hazırladığımız shell, `10.134.62.0/24`, router arkasından `10.134.151.0/24`'e) pod'un `net1` IP'sine ping/TCP **%100 paket kaybıyla başarısız oldu**. Kök neden canlı doğrulandı:
-  - Pod'un `net1` arayüzünde `net.ipv4.conf.net1.rp_filter = 1` (strict reverse-path filtering) varsayılan olarak aktif.
-  - Pod'un **default route'u hâlâ `eth0`** (OVN) üzerinden gidiyor; `net1` sadece `10.134.151.0/24`'e özel bir route ekliyor.
-  - Farklı bir subnetten (örn. `10.134.62.x`) `net1`'e gelen bir paket için kernel "buna cevap `eth0`'dan giderdi, ama paket `net1`'den geldi" diyip **paketi sessizce düşürüyor** — bu yüzden aynı-subnet (pod-pod) trafiği çalışırken, gerçek dış/routed trafik çalışmıyor.
-  - **Standart çözüm olan Multus `tuning` plugin ile `rp_filter`'ı gevşetmeyi denedik — OpenShift bunu admission seviyesinde engelliyor:**
-    ```
-    plugin type="tuning" failed (add): Sysctl net.ipv4.conf.IFNAME.rp_filter is not allowed.
-    Only the following sysctls are allowed: [^net.ipv4.conf.IFNAME.accept_redirects$
-    ^net.ipv4.conf.IFNAME.accept_source_route$ ^net.ipv4.conf.IFNAME.arp_accept$
-    ^net.ipv4.conf.IFNAME.arp_notify$ ^net.ipv4.conf.IFNAME.disable_policy$
-    ^net.ipv4.conf.IFNAME.secure_redirects$ ^net.ipv4.conf.IFNAME.send_redirects$ ...]
-    ```
-  - Bu NAD ile pod oluşturma **tamamen başarısız oldu** (sandbox create hatası, pod hiç ayağa kalkmadı) — yani bu yolu deneyen pod'lar `ContainerCreating`'de tıkanır.
-  - **Gerçek çözüm** (bu repo kapsamında elle uygulanmadı — cluster genelinde node reboot'u tetiklediği için ayrı bir onay/plan gerektirir): `net.ipv4.conf.default.rp_filter=2` (loose mode) değerini bir **MachineConfig** ile ilgili worker node'lara (sysctl dosyası, örn. `/etc/sysctl.d/99-rp-filter.conf`) uygulamak. Bu, MCO'nun node'ları sırayla reboot etmesine yol açan, **cluster/node seviyesinde kalıcı ve paylaşımlı bir değişikliktir** — sadece bu NAD'ı değil, o node'daki tüm pod'ların rp_filter davranışını etkiler. Platform ekibiyle onaylanmadan uygulanmamalıdır.
-  - **Pratik sonuç:** Bu haliyle macvlan demosu, **aynı LAN segmentindeki pod-pod / pod-diğer-cihaz** iletişimi için sorunsuz çalışır; **farklı bir subnetten (router arkasından) pod'a inbound erişim** için ek bir node-seviyesi sysctl değişikliği gerekir.
-
-- **Macvlan'ın kendine has host-pod izolasyon kısıtı:** Node'un kendisi (host netns), üzerinde çalışan macvlan pod'una **ping atamaz** — bu da canlı test edildi (`worker02`'nin kendisinden `10.134.151.241`'e ping `%100 kayıp` verdi). Bu, Linux macvlan sürücüsünün tasarımı gereği normal/beklenen davranıştır (parent arayüz, kendi child'larına doğrudan ulaşamaz), bug değildir.
+- **Macvlan'ın kendine has host-pod izolasyon kısıtı:** Node'un kendisi (host netns), üzerinde çalışan macvlan pod'una **ping atamaz** — bu da canlı test edildi (pod'un çalıştığı node'dan pod'un `net1` IP'sine ping `%100 kayıp` verdi). Bu, Linux macvlan sürücüsünün tasarımı gereği normal/beklenen davranıştır (parent arayüz, kendi child'larına doğrudan ulaşamaz), bug değildir.
 - **IP çakışması riski:** IPAM olarak `whereabouts` yerine sabit/manuel IP (`"ipam": {"type": "static", ...}`) kullanılırsa, birden fazla node'da paralel pod'lar aynı IP'yi alabilir (her node kendi CNI IPAM state'ini tutar, cluster genelinde koordinasyon olmaz) — LAN'da IP çakışmasına yol açar. Bu yüzden macvlan + gerçek LAN kombinasyonunda **whereabouts zorunlu görün**.
-- **Promiscuous mode gereksinimi:** Bu cluster'ın node'ları VMware VM'leri (ARP tablosunda `00:50:56:xx` OUI'li MAC'ler görüldü). `ip -d link show br-ex` çıktısında `promiscuity 2` görüldü (Linux/OVS seviyesinde macvlan için gereken promiscuous mode zaten aktif) — ama bu, **hypervisor/ESXi port group** seviyesindeki "MAC Address Changes" / "Forged Transmits" ayarlarının da izin verdiği anlamına gelmez; bu ayar OpenShift'in dışında, sanallaştırma katmanında kontrol edilir.
+- **Node'lar VM ise (VMware vb.) — promiscuous mode / MAC ayarları:** Her macvlan arayüzü kendi MAC adresiyle konuşur. Node'lar bir hypervisor üzerinde VM olarak çalışıyorsa, port group / vSwitch seviyesinde **"MAC Address Changes"** ve **"Forged Transmits"** (gerekirse "Promiscuous Mode") izinli olmalıdır; aksi halde pod'ların trafiği hypervisor tarafından düşürülür. Bu ayar OpenShift'in dışında, sanallaştırma katmanında yapılır. Node içinde `ip -d link show br-ex` → `promiscuity` değeri Linux/OVS tarafının hazır olduğunu gösterir. Bare-metal node'larda bu sorun yoktur.
 - **NetworkPolicy macvlan'ı kapsamaz:** Kubernetes `NetworkPolicy` kaynakları sadece cluster'ın birincil (OVN) arayüzünü kapsar; macvlan (`net1`) üzerinden gelen/giden trafiği **kısıtlamaz**. Macvlan pod'ları için erişim kontrolü LAN/switch/firewall seviyesinde ele alınmalıdır.
 
 ---
 
-## 7. Temizlik
+## 8. Temizlik
 
 ```bash
 oc delete pod macvlan-test macvlan-test-2 -n sekom-ocp-poc
-oc delete -f macvlan-nad.yaml
+oc delete net-attach-def macvlan-lan macvlan-lan-routed -n sekom-ocp-poc
 ```
 
 ---
@@ -231,4 +289,5 @@ oc delete -f macvlan-nad.yaml
 2. Gerçek LAN'a çıkan macvlan demolarında IPAM olarak **her zaman whereabouts** kullanın, statik IP'yi elle dağıtmayın.
 3. Pod'dan node'un kendisine macvlan üzerinden ping atamamak bir bug değil, kernel'in macvlan tasarımının doğal sonucudur.
 4. NetworkPolicy macvlan trafiğini kapsamaz — erişim kontrolünü LAN seviyesinde planlayın.
-5. **Farklı bir subnetten pod'a inbound erişim, `rp_filter=1` yüzünden varsayılan olarak çalışmaz** ve OpenShift bunu `tuning` CNI plugin'i ile düzeltmeyi admission seviyesinde engelliyor — tek çözüm cluster-genelinde bir MachineConfig (node reboot gerektirir), bu yüzden bu demoyu "aynı LAN segmenti" senaryosu olarak sunun, farklı subnetten erişim gerekiyorsa önceden platform ekibiyle MachineConfig'i planlayın.
+5. **Farklı bir subnetten pod'a inbound erişim, `rp_filter=1` yüzünden varsayılan olarak çalışmaz.** Çözüm, NAD'ın IPAM'ine o subnet(ler) için `net1` gateway'i üzerinden **route** eklemektir (`macvlan-nad-routed.yaml`); node değişikliği veya reboot gerekmez.
+6. Pod IP bloğu **DHCP havuzu dışında** olmalı ve kullanılmadan önce `arping` ile kontrol edilmelidir.

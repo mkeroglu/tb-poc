@@ -2,7 +2,7 @@
 
 > [← 04 — Image Yönetimi](../../A-PlatformTemeli/04-ImageYonetimi/README.md) · [POC akışı](../../README.md) · [06 — Blue/Green Deployment →](../06-BlueGreenDeployment/README.md)
 
-Bu bölümde OpenShift üzerinde CI/CD ve deployment stratejileri ele alınacaktır:
+Bu bölümde OpenShift üzerinde CI/CD ve deployment stratejileri ele alınacaktır. Tüm adımlar Sekom lab ortamında (OpenShift 4.22, OpenShift GitOps 1.22, OpenShift Pipelines 1.23) **uçtan uca canlı test edilmiştir**; GitOps testi bu reponun kendisi (GitHub, `main`) kaynak alınarak yapılmıştır:
 
 - [x] GitOps deployment
 - [x] Pipeline otomasyonu
@@ -112,6 +112,10 @@ oc apply -f argocd-application.yaml
 oc get applications.argoproj.io -n openshift-gitops
 ```
 
+✅ **Gerçek çıktı:** Application oluşturulduktan **5 sn** sonra `Sync: Synced, Health: Healthy`, revizyon = repodaki son commit. `CreateNamespace=true` ile `sekom-ocp-poc-gitops-dev` namespace'i oluştu; Deployment `1/1`, Service ve edge Route geldi (`https://...` → `200`). Aynı repodan `overlays/prod`'u hedefleyen ikinci bir Application `sekom-ocp-poc-gitops-prod`'a **3/3** replika ile açıldı.
+
+> **Yetki hatası alırsanız:** Varsayılan `openshift-gitops` Argo CD instance'ı bazı kurulumlarda sadece kendi namespace'ini ve `argocd.argoproj.io/managed-by=openshift-gitops` etiketli namespace'leri yönetebilir. Sync `... is forbidden` hatasıyla düşerse hedef namespace'i etiketleyin: `oc label namespace <ns> argocd.argoproj.io/managed-by=openshift-gitops`. (`CreateNamespace=true` ile oluşan namespace'e etiket `managedNamespaceMetadata` ile verilebilir.)
+
 > **Not:** `Application` kaynağı hem `argoproj.io` hem farklı bir operatörden gelen `app.k8s.io` API grubunda aynı isimle (`applications`) bulunabilir. Belirsizlik olursa tam kaynak adını kullanın: `oc get applications.argoproj.io`.
 
 ### Application oluşturma — arayüzden
@@ -160,7 +164,14 @@ app/
 | `automated.prune: true` | Git'ten bir kaynak **silinirse**, cluster'daki karşılığı da otomatik silinir. |
 | `syncOptions: [CreateNamespace=true]` | Hedef namespace yoksa otomatik oluşturulur. |
 
-**Canlı doğrulanan `selfHeal` davranışı:** `automated.selfHeal: true` olan bir Application'ın senkronize ettiği bir Service kaynağı elle (`oc delete svc ...`) silindiğinde, Argo CD bunu **~15 saniye içinde** otomatik olarak yeniden oluşturdu — elle müdahaleye gerek kalmadan.
+**Canlı doğrulanan `selfHeal` davranışı** — ✅ **Gerçek çıktı:**
+
+| Elle yapılan değişiklik | Argo CD'nin tepkisi |
+|---|---|
+| `oc delete svc gitops-demo` | Service **2 sn** içinde Git'teki haliyle yeniden oluşturuldu |
+| `oc scale deploy/gitops-demo --replicas=4` (Git'te 1) | Replika **8 sn** içinde tekrar 1'e indirildi |
+
+Her iki durumda da Application `Synced/Healthy` kaldı; elle müdahaleye gerek olmadı.
 
 **Manuel sync tetikleme:**
 
@@ -288,7 +299,7 @@ oc apply -f pipeline-target-app.yaml
 oc get rolebinding pipelines-scc-rolebinding -n <namespace>
 ```
 
-Komut `NotFound` dönerse birkaç saniye bekleyip tekrar deneyin. Binding görünmüyorsa veya sorun devam ediyorsa, `pipeline` ServiceAccount'una `pipelines-scc`'yi elle bağlayarak da çözebilirsiniz:
+Komut `NotFound` dönerse birkaç saniye bekleyip tekrar deneyin (✅ canlı testte binding, Pipeline oluşturulduktan **8 sn** sonra geldi). Binding görünmüyorsa veya sorun devam ediyorsa, `pipeline` ServiceAccount'una `pipelines-scc`'yi elle bağlayarak da çözebilirsiniz:
 
 ```bash
 oc adm policy add-scc-to-user pipelines-scc -z pipeline -n <namespace>
@@ -314,6 +325,16 @@ oc get pods -l tekton.dev/pipelineRun=<pipelinerun-adi>
 oc logs -f <pod-adi> --all-containers
 ```
 
+✅ **Gerçek çıktı:** `Succeeded: Tasks Completed: 3 (Failed: 0, Cancelled 0)`, toplam **164 sn**:
+
+| Task | Süre |
+|---|---|
+| `fetch-source` (git-clone) | 39 sn |
+| `build-and-push` (buildah → internal registry) | 1 dk 50 sn |
+| `deploy` (`oc rollout restart` + status) | 8 sn |
+
+`pipelines-demo` ImageStream'i oluştu; başlangıçta `ImagePullBackOff`'ta bekleyen Deployment yeni imajla `Running` oldu. Doğrulama: `curl http://<route>/vote` → `{"a":0,"b":0}` (`200`). (Bu örnek uygulamanın kök yolu `/` `404` döner; bu beklenen bir davranış.)
+
 ### Arayüzden (Web Console) çalıştırma
 
 1. **Developer** görünümünde sol menüden **Pipelines**'e gidin.
@@ -321,20 +342,63 @@ oc logs -f <pod-adi> --all-containers
 3. Açılan formda parametreleri (`git-url`, `git-revision`, `context-dir`, `image`, `deployment-name`) ve Workspace için bir **VolumeClaimTemplate** (boyut, örn. 1Gi) girin.
 4. **Start** ile PipelineRun'ı tetikleyin — ilerleme, her Task için ayrı bir sütun/adım olarak görsel şekilde (DAG görünümü) izlenebilir; bir adıma tıklayarak canlı log akışını görebilirsiniz.
 
-### Triggers ile otomatik tetikleme (kavram)
+### Triggers ile otomatik tetikleme (webhook)
 
-Her commit'te pipeline'ı elle başlatmak yerine, bir Git sağlayıcısının (GitHub/GitLab/Bitbucket) **webhook**'u ile otomatik tetikleme için üç kaynak birlikte kullanılır:
+Her commit'te pipeline'ı elle başlatmak yerine, Git sağlayıcısının (GitHub/GitLab/Bitbucket/Gitea) **webhook**'u ile otomatik tetikleme yapılır:
 
-- **TriggerTemplate**: webhook geldiğinde hangi PipelineRun'ın hangi parametrelerle oluşturulacağını tanımlar.
-- **TriggerBinding**: webhook payload'ındaki alanları (örn. `body.head_commit.id`) TriggerTemplate parametrelerine eşler.
-- **EventListener**: bir Service/Route üzerinden webhook isteklerini dinler, gelen isteği TriggerBinding + TriggerTemplate üzerinden işleyip PipelineRun oluşturur.
+- **TriggerBinding**: webhook payload'ındaki alanları (`body.repository.clone_url`, `body.after`) parametrelere eşler.
+- **TriggerTemplate**: bu parametrelerle oluşturulacak PipelineRun'ın şablonu.
+- **EventListener**: bir Service/Route üzerinden webhook'u dinler. **Interceptor** ile olay tipi filtrelenir (örn. sadece `push`) ve webhook imzası doğrulanabilir.
 
-Akış: `Git push → webhook → EventListener Route → TriggerBinding (payload'ı ayrıştırır) → TriggerTemplate (PipelineRun şablonu) → yeni PipelineRun oluşturulur`. Kurulum detayları (RBAc, `TriggerTemplate`/`TriggerBinding`/`EventListener` YAML'ları) gerçek Git sağlayıcısı ve webhook secret'ı netleştiğinde ayrıca eklenecektir.
+Akış: `Git push → webhook → EventListener Route → interceptor (filtre/imza) → TriggerBinding → TriggerTemplate → yeni PipelineRun`.
+
+`triggers.yaml` bunların hepsini içerir (TriggerTemplate'teki `REPLACE_ME_NAMESPACE`'i kendi namespace'inizle değiştirin):
+
+```bash
+NS=<namespace>
+# EventListener'ın cluster kapsamındaki interceptor'lara erişimi için (EventListener'dan ÖNCE oluşturun):
+oc create clusterrolebinding $NS-trigger-sa-clusterroles \
+  --clusterrole=tekton-triggers-eventlistener-clusterroles --serviceaccount=$NS:pipeline-trigger-sa
+sed "s/REPLACE_ME_NAMESPACE/$NS/" triggers.yaml | oc apply -n $NS -f -
+oc get eventlistener build-and-deploy-listener -n $NS        # READY=True
+oc expose svc el-build-and-deploy-listener -n $NS            # webhook adresi
+oc get route el-build-and-deploy-listener -n $NS -o jsonpath='{.spec.host}'
+```
+
+Git sağlayıcısında webhook: **Payload URL** = `http://<yukarıdaki route>`, **Content type** = `application/json`, **Events** = `push`. Webhook imzası doğrulanacaksa bir secret oluşturup interceptor'a ekleyin:
+
+```yaml
+interceptors:
+  - ref: {name: github}
+    params:
+      - name: secretRef
+        value: {secretName: github-webhook-secret, secretKey: token}
+      - name: eventTypes
+        value: ["push"]
+```
+
+> ClusterRoleBinding EventListener'dan sonra oluşturulursa EventListener pod'u ilk başlatmada yetki hatası alıp yeniden başlar ve `READY` birkaç saniye `False (MinimumReplicasUnavailable)` görünür. Sırayla oluşturmak bunu önler.
+
+**Test (Git sağlayıcısı olmadan, webhook'u taklit ederek):**
+
+```bash
+EL=$(oc get route el-build-and-deploy-listener -n $NS -o jsonpath='{.spec.host}')
+# push dışı olay -> filtrelenmeli
+curl -s -X POST http://$EL -H 'Content-Type: application/json' -H 'X-GitHub-Event: issues' -d '{}'
+# push olayı -> PipelineRun oluşmalı
+curl -s -X POST http://$EL -H 'Content-Type: application/json' -H 'X-GitHub-Event: push' \
+  -d '{"after":"master","repository":{"clone_url":"https://github.com/openshift/pipelines-vote-api.git"}}'
+oc get pipelinerun -n $NS
+```
+
+✅ **Gerçek çıktı:** İki istek de `{"eventListener":"build-and-deploy-listener",...,"eventID":"..."}` döndü (EventListener isteği kabul eder, filtreleme arkada yapılır). Sadece `push` olayı için yeni bir PipelineRun (`build-and-deploy-webhook-9nxxz`) oluştu; parametreleri payload'dan geldi (`https://github.com/openshift/pipelines-vote-api.git @ master`) ve **55 sn**'de `Succeeded` oldu. `issues` olayı PipelineRun oluşturmadı.
 
 ### Temizlik
 
 ```bash
 oc delete pipelinerun -l tekton.dev/pipeline=build-and-deploy
+oc delete -f triggers.yaml
+oc delete clusterrolebinding <namespace>-trigger-sa-clusterroles
 oc delete -f pipeline-target-app.yaml
 oc delete -f pipeline-build-deploy.yaml
 ```

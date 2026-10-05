@@ -4,7 +4,7 @@
 
 Bu doküman, **aynı namespace içindeki** iş yüklerini **katman/rol** (`tier` label'ı) bazında izole edip **yalnızca izinli akışların** geçmesini sağlayan bir mikro-segmentasyon senaryosunu anlatır. [08 — NetworkPolicy](../08-NetworkPolicy/README.md) rehberindeki demo **namespace bazlıydı** (`frontend`/`backend`/`monitoring` ayrı namespace'lerdi, `namespaceSelector` kullanılmıştı); burada asıl fark — **tek bir namespace içinde**, pod'ların `tier` label'ına göre (`podSelector`) izolasyon uygulanması, yani "namespace sınırı" değil **iş yükünün rolü** izolasyon birimi oluyor. Klasik 3 katmanlı mimari (**frontend → backend → database**) üzerinden, frontend'in backend'i **atlayarak** database'e doğrudan erişememesi canlı olarak kanıtlanmıştır.
 
-Tüm adımlar bu repodaki cluster'da (OpenShift 4.22, OVNKubernetes) **`microseg-demo` namespace'inde canlı test edilmiştir**.
+Tüm adımlar Sekom lab ortamında (OpenShift 4.22, OVNKubernetes) **`sekom-microseg-demo` namespace'inde canlı test edilmiştir**. YAML'lar bu klasörde ayrı dosyalar olarak da bulunur.
 
 Senaryo sırası:
 
@@ -34,13 +34,13 @@ Tek bir namespace'te 3 katman (her biri `tier` label'ıyla ayrılmış):
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: microseg-demo
+  name: sekom-microseg-demo
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
-  namespace: microseg-demo
+  namespace: sekom-microseg-demo
   labels:
     tier: frontend
 spec:
@@ -61,7 +61,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
-  namespace: microseg-demo
+  namespace: sekom-microseg-demo
   labels:
     tier: backend
 spec:
@@ -82,7 +82,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: database
-  namespace: microseg-demo
+  namespace: sekom-microseg-demo
   labels:
     tier: database
 spec:
@@ -101,23 +101,23 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: frontend, namespace: microseg-demo }
+metadata: { name: frontend, namespace: sekom-microseg-demo }
 spec: { selector: { tier: frontend }, ports: [{ port: 8080 }] }
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: backend, namespace: microseg-demo }
+metadata: { name: backend, namespace: sekom-microseg-demo }
 spec: { selector: { tier: backend }, ports: [{ port: 8080 }] }
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: database, namespace: microseg-demo }
+metadata: { name: database, namespace: sekom-microseg-demo }
 spec: { selector: { tier: database }, ports: [{ port: 8080 }] }
 ```
 
 ```bash
 oc apply -f tiers.yaml
-oc get deployment -n microseg-demo
+oc get deployment -n sekom-microseg-demo
 ```
 
 ✅ **Gerçek çıktı:** `frontend`, `backend`, `database` — üçü de `1/1 READY`.
@@ -129,12 +129,12 @@ oc get deployment -n microseg-demo
 NetworkPolicy uygulamadan önce, varsayılan davranışın **allow-all** olduğunu doğrulayın:
 
 ```bash
-FRONTEND_POD=$(oc get pod -n microseg-demo -l tier=frontend -o jsonpath='{.items[0].metadata.name}')
-BACKEND_POD=$(oc get pod -n microseg-demo -l tier=backend -o jsonpath='{.items[0].metadata.name}')
+FRONTEND_POD=$(oc get pod -n sekom-microseg-demo -l tier=frontend -o jsonpath='{.items[0].metadata.name}')
+BACKEND_POD=$(oc get pod -n sekom-microseg-demo -l tier=backend -o jsonpath='{.items[0].metadata.name}')
 
-oc exec "$FRONTEND_POD" -n microseg-demo -- wget -qO- --timeout=3 backend.microseg-demo.svc.cluster.local:8080
-oc exec "$BACKEND_POD"  -n microseg-demo -- wget -qO- --timeout=3 database.microseg-demo.svc.cluster.local:8080
-oc exec "$FRONTEND_POD" -n microseg-demo -- wget -qO- --timeout=3 database.microseg-demo.svc.cluster.local:8080
+oc exec "$FRONTEND_POD" -n sekom-microseg-demo -- wget -qO- --timeout=3 backend.sekom-microseg-demo.svc.cluster.local:8080
+oc exec "$BACKEND_POD"  -n sekom-microseg-demo -- wget -qO- --timeout=3 database.sekom-microseg-demo.svc.cluster.local:8080
+oc exec "$FRONTEND_POD" -n sekom-microseg-demo -- wget -qO- --timeout=3 database.sekom-microseg-demo.svc.cluster.local:8080
 ```
 
 ✅ **Gerçek çıktı:** üçü de başarılı (`BACKEND-OK`, `DATABASE-OK`, `DATABASE-OK`) — **frontend, policy yokken database'e de doğrudan erişebiliyor**. Bu, aşağıdaki NetworkPolicy'lerin çözeceği tam olarak bu sorundur.
@@ -151,7 +151,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-ingress
-  namespace: microseg-demo
+  namespace: sekom-microseg-demo
 spec:
   podSelector: {}          # namespace'teki TÜM pod'lar
   policyTypes: [Ingress]
@@ -161,7 +161,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-frontend-to-backend
-  namespace: microseg-demo
+  namespace: sekom-microseg-demo
 spec:
   podSelector:
     matchLabels: { tier: backend }     # bu kural SADECE backend pod'larını korur
@@ -178,7 +178,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-backend-to-database
-  namespace: microseg-demo
+  namespace: sekom-microseg-demo
 spec:
   podSelector:
     matchLabels: { tier: database }    # bu kural SADECE database pod'larını korur
@@ -196,7 +196,39 @@ spec:
 oc apply -f microseg-policies.yaml
 ```
 
-> **Dikkat:** `frontend` pod'ları için hiçbir "allow" kuralı **yazılmadı** — bu kasıtlı: frontend, dışarıdan (route/ingress dışında) trafik almasına gerek olmayan bir katman, `default-deny-ingress` onun için zaten yeterli koruma.
+> ⚠️ **Dikkat — Route trafiği de kesilir:** `frontend` için bir "allow" kuralı yazılmadığında `default-deny-ingress`, **OpenShift router'ından (Route) gelen dış trafiği de** keser; uygulama kullanıcılara kapanır.
+>
+> ✅ **Gerçek çıktı:** Policy'ler öncesinde `curl http://<frontend-route>` → `200`; `microseg-policies.yaml` uygulandıktan sonra → `000` (zaman aşımı).
+
+Çözüm: Sadece router'ın bulunduğu namespace'ten frontend'e gelen trafiğe izin veren bir kural (`allow-ingress-to-frontend.yaml`). OpenShift, ingress controller namespace'ini `policy-group.network.openshift.io/ingress: ""` label'ıyla işaretler:
+
+```yaml
+# allow-ingress-to-frontend.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-frontend
+  namespace: sekom-microseg-demo
+spec:
+  podSelector:
+    matchLabels: { tier: frontend }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+      ports:
+        - protocol: TCP
+          port: 8080
+```
+
+```bash
+oc expose svc frontend -n sekom-microseg-demo
+oc apply -f allow-ingress-to-frontend.yaml
+```
+
+✅ **Gerçek çıktı:** Route → `FRONTEND-OK [200]`. `database` için de bir Route açılsa bile dışarıdan erişim `000` kaldı; çünkü router'a sadece frontend için izin verildi.
 
 ---
 
@@ -206,13 +238,13 @@ oc apply -f microseg-policies.yaml
 
 ```bash
 echo "frontend -> backend:"
-oc exec "$FRONTEND_POD" -n microseg-demo -- wget -qO- --timeout=3 backend.microseg-demo.svc.cluster.local:8080
+oc exec "$FRONTEND_POD" -n sekom-microseg-demo -- wget -qO- --timeout=3 backend.sekom-microseg-demo.svc.cluster.local:8080
 
 echo "backend -> database:"
-oc exec "$BACKEND_POD" -n microseg-demo -- wget -qO- --timeout=3 database.microseg-demo.svc.cluster.local:8080
+oc exec "$BACKEND_POD" -n sekom-microseg-demo -- wget -qO- --timeout=3 database.sekom-microseg-demo.svc.cluster.local:8080
 
 echo "frontend -> database (DOGRUDAN, backend atlanarak):"
-oc exec "$FRONTEND_POD" -n microseg-demo -- wget -qO- --timeout=3 database.microseg-demo.svc.cluster.local:8080
+oc exec "$FRONTEND_POD" -n sekom-microseg-demo -- wget -qO- --timeout=3 database.sekom-microseg-demo.svc.cluster.local:8080
 ```
 
 ✅ **Gerçek çıktı:**
@@ -238,7 +270,7 @@ command terminated with exit code 1
 ## 6. Temizlik
 
 ```bash
-oc delete namespace microseg-demo
+oc delete project sekom-microseg-demo
 ```
 
 ---
@@ -250,9 +282,11 @@ oc delete namespace microseg-demo
 | frontend → backend :8080 | `allow-frontend-to-backend` | ✅ `BACKEND-OK` |
 | backend → database :8080 | `allow-backend-to-database` | ✅ `DATABASE-OK` |
 | frontend → database :8080 (doğrudan) | *(hiçbiri — kasıtlı olarak yok)* | ❌ timeout |
+| Dış dünya (Route) → frontend | `allow-ingress-to-frontend` | ✅ `FRONTEND-OK` (kural yokken `000`) |
+| Dış dünya (Route) → database | *(hiçbiri)* | ❌ `000` |
 
 **Altın kurallar:**
 1. Mikro-segmentasyonda izolasyon birimi **namespace değil, iş yükünün rolüdür** (`podSelector`, `namespaceSelector` değil).
 2. "Aynı namespace'teyiz" güvenlik garantisi değildir — `default-deny-ingress` + role özel `allow` kuralları olmadan, aynı namespace'teki her pod birbirine serbestçe erişir.
-3. Bir katman için "allow" kuralı **yazmamak** da geçerli bir tasarım kararıdır (örn. frontend'e giriş kuralı yazılmadı) — o katmanın kimseden ingress trafiği almasına gerek yoksa, varsayılan red zaten istenen sonucu verir.
+3. `default-deny-ingress` Route trafiğini de keser: dışarıya açık katman (frontend) için router namespace'inden (`policy-group.network.openshift.io/ingress`) gelen trafiğe açıkça izin verilmelidir. Dışarı açılmaması gereken katmanlar (database) için böyle bir kural yazılmaz.
 4. Testleri her zaman **ilgili rolün pod'u içinden** yapın — segmentasyona tabi olmayan (label'sız) bir test pod'u yanıltıcı "her şey kırık" sonuçları verir.

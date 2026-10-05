@@ -2,7 +2,7 @@
 
 > [← 11 — Güvenlik Testleri](../../C-AgVeGuvenlik/11-SecurityTests/README.md) · [POC akışı](../../README.md) · [13 — East-West Trafik Kontrolü →](../13-EastWestTrafficControl/README.md)
 
-Bu doküman, **OpenShift Logging (Cluster Logging Operator)** + **Loki Operator (LokiStack)** kurup, **application** ve **audit** loglarını Loki'ye yönlendirmeyi anlatır. Depolama (S3) için ayrı bir external S3 yerine cluster'da zaten kurulu olan **ODF (OpenShift Data Foundation)**'ın S3-uyumlu object storage'ı kullanılmıştır. Tüm adımlar bu repodaki cluster'da (OpenShift 4.22) **uçtan uca canlı test edilmiştir** — `sekom-ocp-poc` namespace'ine test pod'u ile log basılmış, hem application hem audit tenant'ından gerçekten Loki'ye ulaştığı LokiStack API'siyle doğrulanmıştır.
+Bu doküman, **OpenShift Logging (Cluster Logging Operator)** + **Loki Operator (LokiStack)** kurup, **application** ve **audit** loglarını Loki'ye yönlendirmeyi anlatır. Depolama (S3) için ayrı bir external S3 yerine cluster'da zaten kurulu olan **ODF (OpenShift Data Foundation)**'ın S3-uyumlu object storage'ı kullanılmıştır. Tüm adımlar Sekom lab ortamında (OpenShift 4.22, Logging 6.6) **uçtan uca canlı test edilmiştir** — `sekom-ocp-poc` namespace'ine test pod'u ile log basılmış, hem application hem audit tenant'ından gerçekten Loki'ye ulaştığı LokiStack API'siyle doğrulanmıştır.
 
 Senaryo sırası:
 
@@ -25,7 +25,9 @@ Senaryo sırası:
 oc get packagemanifest -n openshift-marketplace | grep -iE "^loki-operator|^cluster-logging"
 ```
 
-✅ Bu clusterda ikisi de **Red Hat Operators** kataloğunda, `stable-6.6` default channel ile mevcut.
+✅ İkisi de **Red Hat Operators** kataloğunda, `stable-6.6` default channel ile mevcut.
+
+**Operatörler zaten kurulu olabilir** (başka bir ekip ya da önceki bir çalışma): `oc get csv -A | grep -E 'loki-operator|cluster-logging' | grep -v Copied`. Kuruluysa Bölüm 2 atlanır. Lab testinde ikisi de `v6.6.1 Succeeded` olarak zaten kuruluydu.
 
 **b) S3 backend için ODF sağlıklı mı?**
 
@@ -36,10 +38,10 @@ oc get noobaa -n openshift-storage
 oc get cephobjectstore -n openshift-storage
 ```
 
-- **NooBaa (MCG)** — `Available: False`, `INVALID_SCHEMA_REPLY SERVER system_api#/methods/read_system` hatası veriyordu (bu kuruluma başlamadan haftalar önceden beri süren, önceden var olan bir sorun — bu POC'nin sebep olduğu bir şey değil).
-- **Ceph RGW (`CephObjectStore`)** — `PHASE: Ready`, sağlıklı.
+- **NooBaa (MCG)** — ilk test turunda `Available: False` (`INVALID_SCHEMA_REPLY SERVER system_api#/methods/read_system`) idi; sonraki turda `Ready` oldu. NooBaa'nın durumu zamanla değişebilir.
+- **Ceph RGW (`CephObjectStore`)** — iki turda da `PHASE: Ready`.
 
-**Sonuç:** LokiStack'in S3 backend'i için **NooBaa yerine Ceph RGW** kullanıldı (`ocs-storagecluster-ceph-rgw` storage class). Kendi ortamınızda önce ikisini de kontrol edin, sağlıklı olanı kullanın.
+**Sonuç:** Bu rehberde S3 backend olarak **Ceph RGW** (`ocs-storagecluster-ceph-rgw` storage class) kullanılır. Kendi ortamınızda önce ikisini de kontrol edin, sağlıklı olanı kullanın.
 
 ---
 
@@ -152,6 +154,13 @@ oc create secret generic logging-loki-s3 -n openshift-logging \
   --from-literal=region="us-east-1"
 ```
 
+> ⚠️ **Önceki kurulumdan kalan secret:** `logging-loki-s3` zaten varsa `oc create secret` `already exists` hatası verir ve **LokiStack eski (muhtemelen silinmiş) bucket'ın bilgileriyle** çalışır. Canlı testte önceki bir çalışmadan kalma secret bulundu. Bu durumda secret'ı değiştirip Loki bileşenlerini yeniden başlatın:
+>
+> ```bash
+> oc create secret generic logging-loki-s3 -n openshift-logging ... --dry-run=client -o yaml | oc replace -f -
+> oc rollout restart deploy,sts -n openshift-logging -l app.kubernetes.io/instance=logging-loki
+> ```
+
 > **Not:** Endpoint için **HTTP (port 80)** kullanıldı, HTTPS (443) değil. RGW'nin sertifikası Ceph'in kendi internal CA'sıyla imzalı; LokiStack'e ayrıca CA bundle tanıtmaktansa, bu trafik zaten cluster-internal (ClusterIP, dışarıdan erişilemez) olduğu için POC amaçlı HTTP yeterli ve daha basit. Üretimde CA bundle ile HTTPS tercih edin.
 
 ---
@@ -177,6 +186,11 @@ spec:
   storageClassName: ocs-storagecluster-ceph-rbd   # WAL/index icin RWO block storage
   tenants:
     mode: openshift-logging   # OpenShift'in kendi RBAC/auth'unu kullanan hazır çok-kiracılı mod
+  limits:
+    global:
+      ingestion:
+        ingestionRate: 40        # MB/sn — 1x.demo varsayılanı 4; audit logları tek başına bunu aşıyor (bkz. 7.3)
+        ingestionBurstSize: 60
 ```
 
 ```bash
@@ -185,7 +199,7 @@ oc get pods -n openshift-logging -l app.kubernetes.io/instance=logging-loki
 oc get lokistack logging-loki -n openshift-logging -o jsonpath='{.status.conditions}'
 ```
 
-✅ **Gerçek çıktı (~90 saniye sonra):** compactor, distributor, gateway (x2), index-gateway, ingester, querier, query-frontend — hepsi `Running`, `status.conditions` içinde `type: Ready, status: "True", reason: ReadyComponents`.
+✅ **Gerçek çıktı (~50–90 saniye sonra):** compactor, distributor, gateway (x2), index-gateway, ingester, querier, query-frontend — hepsi `Running`, `status.conditions` içinde `type: Ready, status: "True", reason: ReadyComponents`.
 
 ---
 
@@ -264,7 +278,10 @@ spec:
   inputs:
     - name: app-logs
       type: application
-      application: {}        # TÜM namespace'ler — production kullanımı; POC testinde daraltıldı, bkz. Bölüm 7
+      application: {}        # TÜM namespace'ler — POC testinde includes ile daraltıldı, bkz. Bölüm 7.3
+      # application:
+      #   includes:
+      #     - namespace: sekom-ocp-poc
     - name: audit-logs
       type: audit
       audit: {}
@@ -296,7 +313,7 @@ oc apply -f clusterlogforwarder.yaml
 oc get pods -n openshift-logging -l app.kubernetes.io/component=collector
 ```
 
-✅ **Gerçek çıktı:** her node'da bir `collector-xxxxx` pod'u (DaemonSet), `1/1 Running`.
+✅ **Gerçek çıktı:** `status.conditions`: `Authorized=True`, `Valid=True`, `Ready=True`. Her (çalışan) node'da bir `collector-xxxxx` pod'u (DaemonSet), `1/1 Running`, yeniden başlatma yok. Collector bellek kullanımı 468Mi–1240Mi arasında ölçüldü (limit 4Gi).
 
 ---
 
@@ -357,7 +374,7 @@ curl -sk -H "Authorization: Bearer $TOKEN" \
   "$ROUTE/api/logs/v1/application/loki/api/v1/query_range"
 ```
 
-✅ **Gerçek çıktı:** `"status":"success"`, stream `k8s_namespace_name=sekom-ocp-poc, k8s_pod_name=log-test-emitter`, `values` içinde `LOKI_DEMO_MARKER_line_1..20` satırlarının tamamı, tam JSON log kaydı (`kubernetes.*`, `@timestamp`, `message` alanlarıyla).
+✅ **Gerçek çıktı:** `"status":"success"`, stream `k8s_namespace_name=sekom-ocp-poc, k8s_pod_name=log-test-emitter`, `values` içinde `LOKI_DEMO_MARKER_line_1..20` satırlarının **20'si de**, tam JSON log kaydı (`kubernetes.*`, `@timestamp`, `message` alanlarıyla).
 
 **d) Audit tenant'ından sorgu:**
 
@@ -370,7 +387,7 @@ curl -sk -H "Authorization: Bearer $TOKEN" \
   "$ROUTE/api/logs/v1/audit/loki/api/v1/query_range"
 ```
 
-✅ **Gerçek çıktı:** `"status":"success"`, `master02`/`master03` node'larından gerçek kube-apiserver audit kayıtları (`annotations."authorization.k8s.io/decision":"allow"`, `"authorization.k8s.io/reason":"RBAC: allowed by ClusterRoleBinding ..."` gibi alanlarla).
+✅ **Gerçek çıktı:** `"status":"success"`, control plane node'larından gerçek kube-apiserver audit kayıtları (örn. `verb: get`, `resource: olmconfigs`, (`annotations."authorization.k8s.io/decision":"allow"`, `"authorization.k8s.io/reason":"RBAC: allowed by ClusterRoleBinding ..."` gibi alanlarla).
 
 **Sonuç: hem application hem audit logları uçtan uca Loki'ye ulaşıyor, gateway üzerinden sorgulanabiliyor.**
 
@@ -386,7 +403,7 @@ ODF'te **iki ayrı S3 uyumlu backend** olabilir: NooBaa (MCG) ve Ceph RGW. Bu cl
 
 Bu cluster ~90 namespace barındırıyor. ClusterLogForwarder'ı `spec.collector.resources` belirtmeden oluşturunca collector pod'ları (vector) sürekli **`OOMKilled`** oldu (default limit çok düşük). Çözüm: `spec.collector.resources.limits.memory` değerini yükseltmek (bu POC'de `4Gi`'ye çıkarıldı, o zaman stabil kaldı).
 
-### 7.3 `1x.demo` boyutu, gerçek cluster çapında application log hacmi için yetersiz
+### 7.3 `1x.demo` boyutu, gerçek cluster çapında log hacmi için yetersiz (audit dahil)
 
 LokiStack `1x.demo` boyutu (tek replikalı, demo amaçlı) varsayılan **`ingestionRate: 4MB/sn`** limitine sahip. `application` input'u **tüm namespace'leri** kapsayacak şekilde (`application: {}`, filtre yok) bırakıldığında, cluster'ın gerçek toplam log hacmi bu limiti fazlasıyla aştı — distributor **tüm** application yazmalarını reddetti:
 
@@ -395,7 +412,15 @@ level=error ... msg="write operation failed" details="ingestion rate limit excee
 application (limit: 4194304 bytes/sec) ..." org_id=application
 ```
 
-`spec.limits.global.ingestion.ingestionRate` değerini (bu POC'de `40` MB/sn'ye) yükseltmek hatayı durdurdu, ama tek-repliklı `1x.demo`'nun gerçek üretim hacmini kaldırması yine de garanti değil. **İki pratik seçenek:**
+**Audit logları da aynı limite takılır.** İkinci test turunda application input'u tek namespace'e daraltıldığı halde distributor 5 dakikada **449 kez** hata verdi; hepsi audit tenant'ındandı:
+
+```
+details="ingestion rate limit exceeded for user audit (limit: 4194304 bytes/sec) while attempting to ingest '1461' lines totaling '2517323' bytes ..."
+```
+
+Kube-apiserver audit log hacmi cluster'ın büyüklüğüne ve API trafiğine bağlıdır; orta ölçekli bir cluster'da tek başına 4 MB/sn'yi aşabilir. Bu yüzden `lokistack.yaml`'a limit varsayılan olarak eklendi.
+
+`spec.limits.global.ingestion.ingestionRate` değerini (bu POC'de `40` MB/sn'ye) yükseltmek hatayı durdurdu (✅ canlı testte patch sonrası 2 dakikada **0** hata), ama tek-repliklı `1x.demo`'nun gerçek üretim hacmini kaldırması yine de garanti değil. **İki pratik seçenek:**
 
 - **Üretimde:** LokiStack boyutunu gerçek log hacmine göre seçin (`1x.small`/`1x.medium`/`1x.large` — Red Hat dokümantasyonundaki ingestion-rate tablosuna bakın), `1x.demo`'yu sadece gerçek demo/test için kullanın.
 - **Kapsamı daraltmak isterseniz:** `spec.inputs[].application.includes` ile sadece ilgilendiğiniz namespace'leri toplayın (bu POC'nin canlı testinde yapılan budur — `includes: [{namespace: sekom-ocp-poc}]` — hem ingestion limitine takılmadı hem de diğer tenant'ların log hacmini gereksiz yere Loki'ye çekmedi):
@@ -416,10 +441,12 @@ inputs:
 ```bash
 oc delete clusterlogforwarder collector -n openshift-logging
 oc delete lokistack logging-loki -n openshift-logging
+oc delete pvc -n openshift-logging -l app.kubernetes.io/instance=logging-loki   # LokiStack silinince PVC'ler kalır
 oc delete secret logging-loki-s3 -n openshift-logging
 oc delete obc loki-bucket-odf -n openshift-logging
 oc delete clusterrolebinding collector-application-logs collector-audit-logs collector-logs-writer log-reader-binding
 oc delete clusterrole loki-log-reader
+oc delete sa collector log-reader -n openshift-logging
 oc delete subscription loki-operator -n openshift-operators-redhat
 oc delete subscription cluster-logging -n openshift-logging
 oc delete ns openshift-logging openshift-operators-redhat
@@ -439,7 +466,8 @@ oc delete ns openshift-logging openshift-operators-redhat
 | `ClusterLogForwarder` (`collector`) | `openshift-logging` | Hangi loglar (application, audit) nereye (LokiStack) gidecek |
 
 **Altın kurallar:**
-1. ODF'te birden fazla S3 backend'i varsa (NooBaa + RGW), kurulumdan önce **sağlıklı olanı** seçin — sağlıksız NooBaa'yla OBC süresiz `Pending` kalır, hiç hata mesajı vermez.
-2. Yoğun cluster'larda collector'a **mutlaka** `spec.collector.resources` ile explicit memory limiti verin — varsayılan limit OOMKilled'e sebep olabilir.
-3. `1x.demo` LokiStack boyutu **gerçek üretim log hacmini kaldırmayabilir** — ya boyutu büyütün ya da `application.includes` ile kapsamı daraltın; aksi halde distributor sessizce (sizin loglarınız dahil) veri kaybeder.
-4. Doğrulamayı LokiStack gateway API'sine gerçek bir sorgu atarak yapın (`/api/logs/v1/<tenant>/loki/api/v1/query_range`) — pod'ların `Running` olması, verinin gerçekten Loki'ye ulaştığı anlamına gelmez.
+1. Kurulumdan önce operatörlerin ve `logging-loki-s3` secret'ının **daha önceden var olup olmadığını** kontrol edin; eski bir secret LokiStack'i yanlış bucket'a bağlar.
+2. ODF'te birden fazla S3 backend'i varsa (NooBaa + RGW), kurulumdan önce **sağlıklı olanı** seçin — sağlıksız NooBaa'yla OBC süresiz `Pending` kalır, hiç hata mesajı vermez.
+3. Yoğun cluster'larda collector'a **mutlaka** `spec.collector.resources` ile explicit memory limiti verin — varsayılan limit OOMKilled'e sebep olabilir.
+4. `1x.demo` LokiStack boyutu **gerçek üretim log hacmini kaldırmayabilir — audit logları dahil** — ya boyutu büyütün ya da `application.includes` ile kapsamı daraltın; aksi halde distributor sessizce (sizin loglarınız dahil) veri kaybeder.
+5. Doğrulamayı LokiStack gateway API'sine gerçek bir sorgu atarak ve distributor loglarında `rate limit exceeded` arayarak yapın (`/api/logs/v1/<tenant>/loki/api/v1/query_range`) — pod'ların `Running` olması, verinin gerçekten Loki'ye ulaştığı anlamına gelmez.
