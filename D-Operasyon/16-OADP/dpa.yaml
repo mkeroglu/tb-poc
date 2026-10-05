@@ -1,0 +1,29 @@
+# dpa.yaml
+apiVersion: oadp.openshift.io/v1alpha1
+kind: DataProtectionApplication
+metadata:
+  name: dpa-odf
+  namespace: openshift-adp
+spec:
+  configuration:
+    velero:
+      defaultPlugins:
+        - openshift
+        - aws
+    nodeAgent:
+      enable: false          # PV dosya-seviyesi (kopia/restic) yedeklemesi kapalı — bkz. Bölüm 8
+      uploaderType: kopia     # enable:false olsa da alan zorunlu (CRD validasyonu)
+  backupLocations:
+    - velero:
+        provider: aws
+        default: true
+        credential:
+          name: cloud-credentials
+          key: cloud
+        objectStorage:
+          bucket: REPLACE_ME_BUCKET_NAME   # Bolum 2'deki OBC'nin urettigi gercek bucket adi
+          prefix: velero
+        config:
+          region: us-east-1
+          s3Url: http://rook-ceph-rgw-ocs-storagecluster-cephobjectstore.openshift-storage.svc:80
+          s3ForcePathStyle: "true"

@@ -1,0 +1,16 @@
+# backup-with-volumes.yaml
+# PVC'leri CSI snapshot ile yedekleyen Backup (DPA'da "csi" plugin'i gerekir)
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: sekom-oadp-demo-backup
+  namespace: openshift-adp
+  annotations:
+    # VolumeSnapshotClass'ı "velero.io/csi-volumesnapshot-class=true" etiketiyle işaretlemek yerine backup bazında seçer
+    velero.io/csi-volumesnapshot-class_openshift-storage.rbd.csi.ceph.com: ocs-storagecluster-rbdplugin-snapclass
+spec:
+  includedNamespaces:
+    - sekom-oadp-demo
+  snapshotVolumes: true
+  storageLocation: dpa-odf-1
+  ttl: 720h0m0s

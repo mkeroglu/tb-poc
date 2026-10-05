@@ -8,8 +8,8 @@ için **OpenShift Data Foundation (ODF)**'in S3 uyumlu **NooBaa** Multi-Cloud
 Gateway'i üzerinden oluşturulan bir bucket kullanarak, tamamen `oc` CLI ile
 kurma adımlarını anlatır.
 
-> Bu adımlar `bedrock` kümesinde fiilen uygulanan kurulumun genelleştirilmiş
-> halidir.
+> Tüm adımlar Sekom lab ortamında (OpenShift 4.22, ACM hub + 2 managed cluster)
+> **uçtan uca canlı test edilmiştir**; "✅ Gerçek çıktı" satırları bu testten alınmıştır.
 
 ## Ön koşullar
 
@@ -84,7 +84,7 @@ data:
 ## 2. Adım — Bucket bilgilerini ve kimlik bilgilerini okuma
 
 ```bash
-BUCKET_NAME=$(oc get cm multiclusterobs -n openshift-storage -o jsonpath='{.data.BUCKET_HOST}')
+BUCKET_HOST=$(oc get cm multiclusterobs -n openshift-storage -o jsonpath='{.data.BUCKET_HOST}')
 BUCKET_NAME=$(oc get cm multiclusterobs -n openshift-storage -o jsonpath='{.data.BUCKET_NAME}')
 ACCESS_KEY=$(oc get secret multiclusterobs -n openshift-storage -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
 SECRET_KEY=$(oc get secret multiclusterobs -n openshift-storage -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
@@ -111,18 +111,21 @@ cat <<EOF > /tmp/thanos.yaml
 type: s3
 config:
   bucket: ${BUCKET_NAME}
-  endpoint: s3.openshift-storage.svc:80
+  endpoint: ${BUCKET_HOST}:80
   insecure: true
   access_key: ${ACCESS_KEY}
   secret_key: ${SECRET_KEY}
 EOF
 
+# Secret zaten varsa (önceki bir kurulumdan) "create" hata verir; aşağıdaki satır yoksa oluşturur, varsa günceller:
 oc create secret generic thanos-object-storage \
   -n open-cluster-management-observability \
-  --from-file=thanos.yaml=/tmp/thanos.yaml
+  --from-file=thanos.yaml=/tmp/thanos.yaml --dry-run=client -o yaml | oc apply -f -
 
 rm -f /tmp/thanos.yaml
 ```
+
+> ⚠️ **Önceden kalmış secret:** `thanos-object-storage` daha önceki bir MCO kurulumundan kalmış olabilir; artık var olmayan bir bucket'ı gösteriyorsa Thanos veri yazamaz. Lab testinde aylar öncesinden kalma, OBC'si silinmiş bir secret bulundu; önce yedeklenip yeni bucket bilgileriyle güncellendi. Kontrol: `oc get secret thanos-object-storage -n open-cluster-management-observability -o jsonpath='{.metadata.creationTimestamp}'` ve `oc get obc -A`.
 
 > **Not:** `endpoint` alanında port **80** ve `insecure: true` kullanılıyor
 > çünkü küme içinden NooBaa S3 servisine düz HTTP ile erişiliyor (trafik
@@ -211,6 +214,32 @@ Grafana'ya erişim için route:
 oc get route -n open-cluster-management-observability
 ```
 
+✅ **Gerçek çıktı:** MCO `Ready=True` **123 sn**'de. Birkaç dakika içinde yukarıdaki bileşenlerin hepsi `Running` oldu (thanos-receive ×3, store-shard ×3, query/query-frontend, observatorium-api ×2, grafana ×2, alertmanager ×3, metrics-collector). Route'lar: `alertmanager`, `grafana`, `observatorium-api`, `rbac-query-proxy`.
+
+**Managed cluster'lardaki addon:**
+
+```bash
+oc get managedclusteraddon observability-controller -A
+```
+
+✅ **Gerçek çıktı:** Erişilebilir managed cluster'da `Available=True (ManagedClusterAddOnLeaseUpdated)`. O sırada zaten erişilemeyen (`ManagedCluster available=Unknown`) cluster'da `Unknown`. Hub cluster için ayrı addon yoktur; hub'ın metrikleri `metrics-collector-deployment` ile toplanır.
+
+**Metriklerin gerçekten aktığını doğrulama** (pod'ların `Running` olması yeterli değildir):
+
+```bash
+oc port-forward -n open-cluster-management-observability svc/observability-thanos-query-frontend 19090:9090 &
+curl -s --get --data-urlencode 'query=count by (cluster) (up)' http://127.0.0.1:19090/api/v1/query
+```
+
+✅ **Gerçek çıktı (kurulumdan ~5 dk sonra):**
+
+| cluster | `count(up)` | `count({__name__=~"cluster:.*"})` |
+|---|---|---|
+| hub | 357 | 523 |
+| managed cluster | 130 | 516 |
+
+Kurulumdan hemen sonra collector logunda bir kez `unable to forward results ... observatorium-api` hatası görüldü (API henüz hazır değildi); sonraki gönderimler `metrics pushed successfully` oldu.
+
 ## Bilinen davranışlar / sık karşılaşılan durumlar
 
 - **`observability-thanos-store-shard-*` pod'ları uzun süre `0/1 Running`
@@ -243,9 +272,12 @@ oc get route -n open-cluster-management-observability
 
 ```bash
 oc delete multiclusterobservability observability
+oc delete pvc --all -n open-cluster-management-observability   # MCO silinince 13 PVC (~250Gi) geride kalır
 oc delete secret thanos-object-storage -n open-cluster-management-observability
 oc delete obc multiclusterobs -n openshift-storage   # bucket verisini de siler
 ```
+
+✅ **Gerçek çıktı:** MCO CR'ı silinince pod'lar ve managed cluster'lardaki `observability-controller` addon'ları otomatik kaldırıldı, ama Thanos/Alertmanager'ın **13 PVC'si kaldı**; elle silinmesi gerekti.
 
 > `obc` silmek NooBaa bucket'ındaki **tüm veriyi kalıcı olarak siler**.
 > Sadece MCO CR'ını silmek bucket'ı ve içindeki metrik verisini korur.

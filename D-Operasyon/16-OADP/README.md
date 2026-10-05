@@ -2,7 +2,7 @@
 
 > [← 15 — ODF Performans Testi](../15-ODFPerformanceTest/README.md) · [POC akışı](../../README.md) · [17 — OpenShift Virtualization →](../../E-Virtualization/17-Virtualization/README.md)
 
-Bu doküman, **OADP (OpenShift API for Data Protection / Velero)** ile bir namespace'in tamamen silinip **backup'tan geri yüklenmesini** anlatır. Depolama için ([12 — Logging](../12-Logging/README.md) rehberindeki gibi) cluster'da zaten kurulu olan **ODF (Ceph RGW, S3-uyumlu)** kullanılmıştır. Tüm adımlar bu repodaki cluster'da (OpenShift 4.22) **uçtan uca canlı test edilmiştir**: `oadp-demo` namespace'i içeriğiyle (Deployment, ConfigMap, Secret, Service) yedeklenmiş, namespace tamamen silinmiş, sonra backup'tan tam olarak (veri içerikleriyle) geri yüklenmiştir.
+Bu doküman, **OADP (OpenShift API for Data Protection / Velero)** ile bir namespace'in tamamen silinip **backup'tan geri yüklenmesini** anlatır. Depolama için ([12 — Logging](../12-Logging/README.md) rehberindeki gibi) cluster'da zaten kurulu olan **ODF (Ceph RGW, S3-uyumlu)** kullanılmıştır. Tüm adımlar Sekom lab ortamında (OpenShift 4.22, OADP 1.6) **uçtan uca canlı test edilmiştir**: `sekom-oadp-demo` namespace'i içeriğiyle (Deployment, ConfigMap, Secret, Service **ve veri yazılmış bir PVC**) yedeklenmiş, namespace tamamen silinmiş, sonra backup'tan tam olarak geri yüklenmiş ve PVC'deki dosyaların MD5 özetleri birebir aynı çıkmıştır.
 
 Senaryo sırası:
 
@@ -26,7 +26,7 @@ Senaryo sırası:
 oc get csv -n openshift-adp | grep -i oadp
 ```
 
-Bu cluster'da OADP operatörü (`oadp-operator.v1.6.1`) zaten `openshift-adp` namespace'inde kurulu geldi — sadece `DataProtectionApplication` (DPA) yapılandırması eksikti.
+Lab ortamında OADP operatörü (`oadp-operator.v1.6.1`) zaten `openshift-adp` namespace'inde kuruluydu.
 
 Kurulu değilse:
 
@@ -62,7 +62,7 @@ EOF
 
 **b) S3 backend için ODF sağlıklı mı?**
 
-Bu POC'nin [12 — Logging rehberinde](../12-Logging/README.md) belgelendiği gibi, bu cluster'da **NooBaa sağlıksız** (`INVALID_SCHEMA_REPLY`), **Ceph RGW sağlıklı**. OADP için de aynı sebeple **Ceph RGW** (`ocs-storagecluster-ceph-rgw`) kullanıldı. Kendi ortamınızda önce ikisini de kontrol edin:
+[12 — Logging](../12-Logging/README.md) rehberindeki gibi bu rehberde de S3 backend olarak **Ceph RGW** (`ocs-storagecluster-ceph-rgw`) kullanılır (lab ortamında NooBaa bir dönem sağlıksızdı). Kendi ortamınızda önce ikisini de kontrol edin:
 
 ```bash
 oc get noobaa -n openshift-storage
@@ -126,6 +126,8 @@ spec:
       defaultPlugins:
         - openshift
         - aws
+        - csi        # PVC'leri CSI snapshot ile yedeklemek için (Bölüm 5.1)
+        - kubevirt   # VM yedeklemek için (17 — Virtualization); VM yoksa gerekmez
     nodeAgent:
       enable: false          # PV dosya-seviyesi (kopia/restic) yedeklemesi kapalı — bkz. Bölüm 8
       uploaderType: kopia     # enable:false olsa da alan zorunlu (CRD validasyonu)
@@ -166,13 +168,13 @@ oc get pods -n openshift-adp
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: oadp-demo
+  name: sekom-oadp-demo
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: demo-config
-  namespace: oadp-demo
+  namespace: sekom-oadp-demo
 data:
   greeting: "merhaba-oadp-restore-testi"
   created-at: "2026-08-12"
@@ -181,16 +183,16 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: demo-secret
-  namespace: oadp-demo
+  namespace: sekom-oadp-demo
 type: Opaque
 stringData:
-  password: "s3cr3t-oadp-demo"
+  password: "s3cr3t-sekom-oadp-demo"
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: demo-app
-  namespace: oadp-demo
+  namespace: sekom-oadp-demo
   labels:
     app: demo-app
 spec:
@@ -222,7 +224,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: demo-app
-  namespace: oadp-demo
+  namespace: sekom-oadp-demo
 spec:
   selector:
     app: demo-app
@@ -233,7 +235,7 @@ spec:
 
 ```bash
 oc apply -f demo-workload.yaml
-oc get deployment,cm,secret,svc -n oadp-demo
+oc get deployment,cm,secret,svc -n sekom-oadp-demo
 ```
 
 ✅ **Gerçek çıktı:** `deployment.apps/demo-app` → `2/2 READY`.
@@ -247,18 +249,18 @@ oc get deployment,cm,secret,svc -n oadp-demo
 apiVersion: velero.io/v1
 kind: Backup
 metadata:
-  name: oadp-demo-backup
+  name: sekom-oadp-demo-backup
   namespace: openshift-adp
 spec:
   includedNamespaces:
-    - oadp-demo
+    - sekom-oadp-demo
   storageLocation: dpa-odf-1
   ttl: 720h0m0s
 ```
 
 ```bash
 oc apply -f backup.yaml
-oc get backup.velero.io oadp-demo-backup -n openshift-adp -o jsonpath='{.status}'
+oc get backup.velero.io sekom-oadp-demo-backup -n openshift-adp -o jsonpath='{.status}'
 ```
 
 > **Dikkat:** `oc get backup` (tam kaynak adı vermeden) bu cluster'da **`backups.postgresql.cnpg.noobaa.io`** (CloudNativePG operatörünün kaynak tipi) ile çakışıp yanlış kaynağı sorgulayabilir — kısa isim çakışması. Her zaman **`oc get backup.velero.io`** kullanın.
@@ -269,16 +271,42 @@ oc get backup.velero.io oadp-demo-backup -n openshift-adp -o jsonpath='{.status}
 {"completionTimestamp":"...","phase":"Completed","progress":{"itemsBackedUp":58,"totalItems":58},...}
 ```
 
+### 5.1 PVC verisiyle birlikte yedekleme (CSI snapshot)
+
+Kalıcı diski olan uygulamalar için `demo-pvc.yaml` (1Gi PVC + ona yazan `data-app`) eklenir ve PVC'ye veri yazılır:
+
+```bash
+oc apply -f demo-pvc.yaml
+P=$(oc get pod -n sekom-oadp-demo -l app=data-app -o jsonpath='{.items[0].metadata.name}')
+oc exec $P -n sekom-oadp-demo -- /bin/sh -c 'echo "kalici-veri $(date -u +%FT%TZ)" > /data/kritik.txt'
+oc exec $P -n sekom-oadp-demo -- dd if=/dev/urandom of=/data/rastgele.bin bs=1M count=20
+oc exec $P -n sekom-oadp-demo -- md5sum /data/kritik.txt /data/rastgele.bin
+```
+
+Yedek, `backup.yaml` yerine `backup-with-volumes.yaml` ile alınır: `snapshotVolumes: true` ve hangi VolumeSnapshotClass'ın kullanılacağını belirten bir annotation içerir (DPA'da `csi` plugin'i gerekir).
+
+```bash
+oc apply -f backup-with-volumes.yaml
+oc get backups.velero.io sekom-oadp-demo-backup -n openshift-adp \
+  -o jsonpath='{.status.phase} {.status.progress.itemsBackedUp}/{.status.progress.totalItems} csi={.status.csiVolumeSnapshotsCompleted}/{.status.csiVolumeSnapshotsAttempted}'
+```
+
+✅ **Gerçek çıktı:** **22 sn**'de `Completed 75/75 csi=1/1`, hata/uyarı yok.
+
+> Velero normalde `velero.io/csi-volumesnapshot-class=true` etiketli VolumeSnapshotClass'ı arar. Etiket yoksa ve paylaşımlı VolumeSnapshotClass'ı değiştirmek istemiyorsanız, annotation yöntemi (`velero.io/csi-volumesnapshot-class_<driver>: <class>`) kullanılabilir.
+
+> **Kapsam:** CSI snapshot'lar Ceph içinde tutulur, S3'e sadece Kubernetes nesneleri yazılır. Aynı cluster'a geri dönüş için yeterlidir; Ceph'in kaybı ya da başka bir cluster'a taşıma için DPA'da `nodeAgent.enable: true` ve Backup'ta `snapshotMoveData: true` (Data Mover) gerekir.
+
 ---
 
 ## 6. Namespace'i Silme (Felaket Simülasyonu)
 
 ```bash
-oc delete namespace oadp-demo --wait=true
-oc get ns oadp-demo
+oc delete namespace sekom-oadp-demo --wait=true
+oc get ns sekom-oadp-demo
 ```
 
-✅ **Gerçek çıktı:** `Error from server (NotFound): namespaces "oadp-demo" not found` — namespace, içindeki Deployment/ConfigMap/Secret/Service ile birlikte **tamamen silindi**.
+✅ **Gerçek çıktı:** `Error from server (NotFound): namespaces "sekom-oadp-demo" not found` — namespace, içindeki Deployment/ConfigMap/Secret/Service ile birlikte **tamamen silindi**.
 
 ---
 
@@ -289,15 +317,15 @@ oc get ns oadp-demo
 apiVersion: velero.io/v1
 kind: Restore
 metadata:
-  name: oadp-demo-restore
+  name: sekom-oadp-demo-restore
   namespace: openshift-adp
 spec:
-  backupName: oadp-demo-backup
+  backupName: sekom-oadp-demo-backup
 ```
 
 ```bash
 oc apply -f restore.yaml
-oc get restore.velero.io oadp-demo-restore -n openshift-adp -o jsonpath='{.status}'
+oc get restore.velero.io sekom-oadp-demo-restore -n openshift-adp -o jsonpath='{.status}'
 ```
 
 ✅ **Gerçek çıktı:**
@@ -306,12 +334,14 @@ oc get restore.velero.io oadp-demo-restore -n openshift-adp -o jsonpath='{.statu
 {"completionTimestamp":"...","phase":"Completed","progress":{"itemsRestored":44,"totalItems":44},"warnings":10}
 ```
 
+(PVC'li ikinci test turunda: **38 sn**'de `Completed`, `49/49`, 12 uyarı.)
+
 **Kaynakların ve verilerin gerçekten geri geldiğini doğrulama:**
 
 ```bash
-oc get deployment,cm,secret,svc -n oadp-demo
-oc get cm demo-config -n oadp-demo -o jsonpath='{.data}'
-oc get secret demo-secret -n oadp-demo -o jsonpath='{.data.password}' | base64 -d
+oc get deployment,cm,secret,svc -n sekom-oadp-demo
+oc get cm demo-config -n sekom-oadp-demo -o jsonpath='{.data}'
+oc get secret demo-secret -n sekom-oadp-demo -o jsonpath='{.data.password}' | base64 -d
 ```
 
 ✅ **Gerçek çıktı:**
@@ -321,10 +351,19 @@ deployment.apps/demo-app   2/2 READY   (yeniden hiç müdahale etmeden Running'e
 
 {"created-at":"2026-08-12","greeting":"merhaba-oadp-restore-testi"}   <-- ConfigMap verisi birebir geri geldi
 
-s3cr3t-oadp-demo   <-- Secret icerigi birebir geri geldi
+s3cr3t-sekom-oadp-demo   <-- Secret icerigi birebir geri geldi
 ```
 
-**Sonuç: namespace, Deployment (replikalarıyla), ConfigMap ve Secret — hepsi içerikleriyle birebir restore edildi.**
+**PVC verisinin doğrulanması:**
+
+```bash
+P=$(oc get pod -n sekom-oadp-demo -l app=data-app -o jsonpath='{.items[0].metadata.name}')
+oc exec $P -n sekom-oadp-demo -- md5sum /data/kritik.txt /data/rastgele.bin
+```
+
+✅ **Gerçek çıktı:** Yedek öncesi ve restore sonrası MD5'ler birebir aynı (`71a1aad6...  /data/kritik.txt`, `f3910388...  /data/rastgele.bin`); `kritik.txt` içeriği `kalici-veri 2026-10-05T23:07:57Z`. PVC, CSI snapshot'tan yeniden oluşturuldu ve `data-app` kendiliğinden ona bağlanıp açıldı.
+
+**Sonuç: namespace, Deployment (replikalarıyla), ConfigMap, Secret ve PVC verisi — hepsi içerikleriyle birebir restore edildi.**
 
 ---
 
@@ -334,7 +373,7 @@ Restore `Completed` oldu ama **10 uyarı** verdi. `velero restore describe --det
 
 ```bash
 POD=$(oc get pods -n openshift-adp -l app.kubernetes.io/name=velero -o jsonpath='{.items[0].metadata.name}')
-oc exec -n openshift-adp "$POD" -c velero -- ./velero restore describe oadp-demo-restore --details
+oc exec -n openshift-adp "$POD" -c velero -- ./velero restore describe sekom-oadp-demo-restore --details
 ```
 
 Tüm uyarılar şu iki kategoriden:
@@ -348,10 +387,27 @@ Tüm uyarılar şu iki kategoriden:
 
 ## 9. Temizlik
 
+> ⚠️ **Restore'un bıraktığı snapshot:** PVC restore edilirken Velero, namespace'te `deletionPolicy: Retain` olan bir VolumeSnapshot/VolumeSnapshotContent oluşturur. Namespace silinse bile bu snapshot **Ceph'te kalır** (canlı testte doğrulandı). Silmeden önce politikası `Delete` yapılmalıdır.
+>
+> Ayrıca `oc delete backup.velero.io` sadece Kubernetes nesnesini siler; S3'teki yedek verisi ve CSI snapshot'lar için **`DeleteBackupRequest`** kullanılmalıdır (Velero restore kayıtlarını da kendisi temizler).
+
 ```bash
-oc delete restore.velero.io oadp-demo-restore -n openshift-adp
-oc delete backup.velero.io oadp-demo-backup -n openshift-adp
-oc delete ns oadp-demo
+# Restore'un bıraktığı Retain snapshot'ları Delete'e çevir
+for c in $(oc get volumesnapshot -n sekom-oadp-demo -o jsonpath='{.items[*].status.boundVolumeSnapshotContentName}'); do
+  oc patch volumesnapshotcontent $c --type=merge -p '{"spec":{"deletionPolicy":"Delete"}}'
+done
+# Backup'ı S3 verisi ve snapshot'larıyla birlikte sil
+cat <<'EOF' | oc create -f -
+apiVersion: velero.io/v1
+kind: DeleteBackupRequest
+metadata:
+  generateName: sekom-oadp-demo-backup-delete-
+  namespace: openshift-adp
+spec:
+  backupName: sekom-oadp-demo-backup
+EOF
+oc delete ns sekom-oadp-demo
+# DPA'yı başka rehberler (17 — Virtualization) kullanmayacaksa:
 oc delete dpa dpa-odf -n openshift-adp
 oc delete secret cloud-credentials -n openshift-adp
 oc delete obc oadp-bucket-odf -n openshift-adp
@@ -373,4 +429,5 @@ oc delete obc oadp-bucket-odf -n openshift-adp
 1. `oc get backup` yerine her zaman **`oc get backup.velero.io`** kullanın — bu cluster'da CloudNativePG'nin `backups` kaynağıyla isim çakışması var.
 2. NooBaa sağlıksızsa (bkz. [12 — Logging README](../12-Logging/README.md)) **Ceph RGW**'ye geçin — OADP için de aynı S3 backend mantığı geçerli.
 3. Restore'daki "already exists" uyarıları çoğunlukla **zararsızdır** — asıl doğrulama, kendi uygulama kaynaklarınızın **içerikleriyle** (ConfigMap/Secret verisi, replika sayısı vb.) geri geldiğini kontrol etmektir, sadece `phase: Completed`'e güvenmeyin.
-4. Bu POC'de PV/dosya-seviyesi yedekleme (`nodeAgent`/kopia) **kapalı bırakıldı** — sadece Kubernetes API kaynakları (Deployment, ConfigMap, Secret, Service vb.) test edildi. Kalıcı disk verisi olan (PVC bağlı) uygulamalar için `nodeAgent.enable: true` yapıp Backup'a `defaultVolumesToFsBackup: true` eklemeniz gerekir — bu POC kapsamı dışında bırakıldı.
+4. PVC verisi **CSI snapshot** ile yedeklendi ve doğrulandı (Bölüm 5.1). Dosya seviyesi yedekleme (`nodeAgent`/kopia, `defaultVolumesToFsBackup: true`) ya da verinin S3'e kopyalanması (`snapshotMoveData`) ayrıca açılabilir; bu POC'de kapalıdır.
+5. Restore'un bıraktığı `Retain` snapshot'ları ve S3'teki yedekleri temizlerken `DeleteBackupRequest` kullanın (Bölüm 9).

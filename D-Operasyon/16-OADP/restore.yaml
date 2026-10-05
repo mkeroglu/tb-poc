@@ -1,0 +1,8 @@
+# restore.yaml
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: sekom-oadp-demo-restore
+  namespace: openshift-adp
+spec:
+  backupName: sekom-oadp-demo-backup
