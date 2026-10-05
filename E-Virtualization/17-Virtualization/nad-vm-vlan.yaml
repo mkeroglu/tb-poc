@@ -1,0 +1,21 @@
+# VM'leri node'lardaki bir linux-bridge üzerinden kurumsal bir VLAN'a bağlayan ağ.
+#   REPLACE_ME_BRIDGE  : NNCP ile node'larda oluşturulmuş linux-bridge adı (örn. br-vm)
+#   REPLACE_ME_VLAN_ID : VM'lerin bağlanacağı VLAN numarası (bridge'in fiziksel portu switch'te trunk olmalı)
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: vm-vlan
+  namespace: sekom-ocp-poc-virt
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: bridge.network.kubevirt.io/REPLACE_ME_BRIDGE
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "vm-vlan",
+      "type": "bridge",
+      "bridge": "REPLACE_ME_BRIDGE",
+      "vlan": REPLACE_ME_VLAN_ID,
+      "macspoofchk": true,
+      "ipam": {}
+    }

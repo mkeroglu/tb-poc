@@ -5,7 +5,7 @@ metadata:
   annotations:
     defaults.template.kubevirt.io/disk: rootdisk
     description: 'Sekom POC icin ozellestirilmis Fedora template: SSH key secret parametresi,
-      ODF virtualization storage class, hpe node tercihi.'
+      ODF virtualization storage class.'
     iconClass: icon-fedora
     name.os.template.kubevirt.io/fedora43: Fedora Linux 43 or higher
     openshift.io/display-name: Sekom Fedora Small (SSH key + ODF virt)
@@ -147,14 +147,6 @@ objects:
                 secretName: ${SSH_KEY_SECRET}
             propagationMethod:
               noCloud: {}
-        affinity:
-          nodeAffinity:
-            preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 50
-              preference:
-                matchExpressions:
-                - key: node-role.kubernetes.io/hpe
-                  operator: Exists
 parameters:
 - description: VM name
   from: fedora-[a-z0-9]{16}
@@ -174,4 +166,3 @@ parameters:
   description: VM icine enjekte edilecek SSH public key secret adi
   value: vm-ssh-key
   required: true
-

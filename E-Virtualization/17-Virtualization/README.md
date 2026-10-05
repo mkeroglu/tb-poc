@@ -37,7 +37,7 @@ Dosyalar:
 | `data-disk-dv.yaml` | Hotplug edilecek veri diski |
 | `live-migration.yaml` | `VirtualMachineInstanceMigration` |
 | `vm-snapshot.yaml`, `vm-restore.yaml` | Snapshot ve restore |
-| `nad-vlan112.yaml` | VLAN 112 `NetworkAttachmentDefinition` |
+| `nad-vm-vlan.yaml` | VLAN 112 `NetworkAttachmentDefinition` |
 | `scheduling/*.yaml` | nodeSelector, node affinity, anti-affinity, affinity VM'leri |
 | `oadp/namespace.yaml`, `oadp/cross-namespace-clone-rbac.yaml` | Backup testi namespace'i ve namespace'ler arası clone izni |
 | `oadp/backup.yaml`, `oadp/restore.yaml` | Velero Backup / Restore |
@@ -621,7 +621,7 @@ oc get nncp          # br-vm  Available  SuccessfullyConfigured
 ### 9.2 NetworkAttachmentDefinition
 
 ```bash
-oc apply -f nad-vlan112.yaml      # type: bridge, bridge: br-vm, vlan: 112
+oc apply -f nad-vm-vlan.yaml      # type: bridge, bridge: br-vm, vlan: 112
 ```
 
 **Console:** **Networking → NetworkAttachmentDefinitions → Create** → **Network Type: Linux bridge**, **Bridge name** `br-vm`, **VLAN tag** `112`.
@@ -885,7 +885,7 @@ Windows template'leri kurulumla birlikte gelir, ancak Microsoft lisansı nedeniy
 | Hotplug disk / online büyütme | `virtctl addvolume`, `oc patch pvc` | Storage → Add disk / Expand PVC | ✅ 10→20Gi, veri korundu |
 | Live migration | `virtctl migrate` / `VirtualMachineInstanceMigration` | Actions → Migrate | ✅ 7 sn, 0 paket kaybı |
 | Snapshot / restore | `VirtualMachineSnapshot` / `VirtualMachineRestore` | Snapshots sekmesi | ✅ Online + guest agent freeze |
-| Multus VLAN NIC | `nad-vlan112.yaml` + patch (hotplug) | Network → Add interface | ✅ LAN IP'sine doğrudan SSH |
+| Multus VLAN NIC | `nad-vm-vlan.yaml` + patch (hotplug) | Network → Add interface | ✅ LAN IP'sine doğrudan SSH |
 | nodeSelector / node affinity | `scheduling/*.yaml` | Scheduling sekmesi | ✅ |
 | VM affinity / anti-affinity | `scheduling/*.yaml` | Scheduling → Affinity rules | ✅ 4. VM Unschedulable |
 | OADP ile VM backup / restore | `oadp/backup.yaml`, `oadp/restore.yaml` | Installed Operators → OADP | ✅ Çalışırken backup (freeze), namespace silindi, restore 43 sn, SHA256 aynı |

@@ -31,7 +31,7 @@ spec:
         app: sekom-sched
     spec:
       nodeSelector:
-        kubernetes.io/hostname: hpeworker02.bedrock.linuxera.hq
+        kubernetes.io/hostname: REPLACE_ME_NODE   # oc get nodes
       domain:
         devices: {}
       volumes:

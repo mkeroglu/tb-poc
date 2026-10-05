@@ -1,4 +1,4 @@
-# Node affinity: qct rollu node'lar ZORUNLU, worker03 TERCIHLI
+# Node affinity: REPLACE_ME_NODE_LABEL etiketli node'lar ZORUNLU, REPLACE_ME_PREFERRED_NODE TERCIHLI
 ---
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
@@ -35,7 +35,7 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  - key: node-role.kubernetes.io/qct
+                  - key: REPLACE_ME_NODE_LABEL      # örn. node-role.kubernetes.io/worker
                     operator: Exists
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
@@ -43,7 +43,7 @@ spec:
                 matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: In
-                    values: [worker03.bedrock.linuxera.hq]
+                    values: [REPLACE_ME_PREFERRED_NODE]
       domain:
         devices: {}
       volumes:

@@ -1,4 +1,4 @@
-# OpenShift Virtualization operatörü kurulumu (Bedrock cluster'ında zaten kurulu — referans içindir)
+# OpenShift Virtualization operatörü kurulumu (operatör zaten kuruluysa referans içindir)
 apiVersion: v1
 kind: Namespace
 metadata:
