@@ -1,0 +1,16 @@
+# Namespace kapsamlı imza zorunluluğu: scope'taki imajlar, verilen public key ile imzalı değilse CRI-O tarafından çekilmez.
+apiVersion: config.openshift.io/v1
+kind: ImagePolicy
+metadata:
+  name: require-signed-images
+  namespace: sekom-image-signing
+spec:
+  scopes:
+    - image-registry.openshift-image-registry.svc:5000/sekom-image-signing   # sadece bu namespace'in imajları
+  policy:
+    rootOfTrust:
+      policyType: PublicKey
+      publicKey:
+        keyData: REPLACE_ME_COSIGN_PUB_BASE64     # base64 -w0 cosign.pub
+    signedIdentity:
+      matchPolicy: MatchRepository

@@ -19,7 +19,7 @@ Bu repo, Sekom'un müşteri ortamlarında uyguladığı OpenShift POC senaryolar
 | 08 | [NetworkPolicy](C-AgVeGuvenlik/08-NetworkPolicy/README.md) | Default deny, namespace/pod bazlı izin, egress | — |
 | 09 | [Mikro-Segmentasyon](C-AgVeGuvenlik/09-MicroSegmentation/README.md) | Katman/rol bazlı izolasyon | 08 |
 | 10 | [Multus CNI](C-AgVeGuvenlik/10-MultusCNI/README.md) | Pod'a ikinci ağ arayüzü (macvlan) | 02 |
-| 11 | [Güvenlik Testleri](C-AgVeGuvenlik/11-SecurityTests/README.md) | SCC/PSA, image signing | ⚠️ Image signing node reboot'u tetikleyebilir, aşağıdaki nota bakın |
+| 11 | [Güvenlik Testleri](C-AgVeGuvenlik/11-SecurityTests/README.md) | SCC/PSA, image signing | ImagePolicy tüm node'lara MCP rollout'u yapar (~1,5 dk, reboot yok); cosign v2 ve `MatchRepository` gerekir |
 | **D** | **[Operasyon](D-Operasyon)** | | |
 | 12 | [Logging + LokiStack](D-Operasyon/12-Logging/README.md) | Application/audit logları → Loki (ODF S3) | ODF (Ceph RGW), 02 |
 | 13 | [East-West Trafik Kontrolü](D-Operasyon/13-EastWestTrafficControl/README.md) | NetworkPolicy + OVN ACL logging | 08, 09, 12 |
@@ -48,6 +48,6 @@ oc get csv -A --no-headers -o custom-columns=CSV:.metadata.name,PHASE:.status.ph
 ## Planlama Notları
 
 - **Uzun sürenleri önceden başlatın:** LokiStack (12), MultiCluster Observability (14) kurulumları ve Windows imaj pipeline'ı (17.1, ~31 dk) arka planda kendiliğinden ilerler. Gün başında başlatılırsa sırası geldiğinde hazır olurlar. Windows ISO'su (~5 GB) önceden indirilmelidir.
-- **Image signing (11) ayrı planlanmalı:** Rehberde belirtildiği gibi ilk adım test cluster'ında **tüm node'larda reboot rollout'u tetikledi**. Canlı ortamda bakım penceresi ve onayla yapılmalı; POC akışında sadece anlatılması önerilir.
+- **Image signing (11):** `ImagePolicy` tüm node'larda MachineConfig rollout'u başlatır. Test cluster'ında yalnızca CRI-O reload yapıldı, reboot olmadı (~1,5 dk). Yine de değişiklik tüm node'lara dağıtıldığı için canlı ortamda bakım penceresi önerilir.
 - **Paylaşımlı kaynaklar:** 16 ve 17, cluster genelindeki bazı kaynakları (DPA, `openshift-cnv`, `openshift-virtualization-os-images`) etkileyebilir. Rehberlerde bu adımlar ayrıca işaretlenmiştir.
 - **Temizlik:** Her rehberin sonunda kendi temizlik bölümü vardır.

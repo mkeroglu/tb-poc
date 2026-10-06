@@ -5,7 +5,7 @@
 Bu doküman iki ayrı güvenlik konusunu kapsar:
 
 1. **[SCC / PSA Politikaları](#1-scc--psa-politikaları)** — Sekom lab ortamında (OpenShift 4.22) `sekom-psa-scc-test` namespace'inde **canlı test edilmiştir**.
-2. **[Image Signing](#2-image-signing)** — **canlı test edilmemiştir**. Sebebi aşağıda açıklanıyor: bu POC kapsamında denenen ilk adım, bu clusterda **beklenmedik şekilde tüm node'larda (master+worker) bir reboot rollout'u tetikledi**. O yüzden burada sadece **nasıl yapılacağı**, gerçek komutlarla ve bu riskle birlikte anlatılıyor — kararı ve zamanlamayı siz vermelisiniz.
+2. **[Image Signing](#2-image-signing)** — cosign ile imzalama + namespace kapsamlı `ImagePolicy`; `sekom-image-signing` namespace'inde **canlı test edilmiştir** (reboot yok, yalnızca CRI-O reload).
 
 ---
 
@@ -134,78 +134,137 @@ oc delete namespace sekom-psa-scc-test
 
 ### Kavram
 
-OpenShift 4.14+'ta, `ClusterImagePolicy` (cluster geneli) ve `ImagePolicy` (namespace bazlı) kaynakları (`config.openshift.io/v1`) ile **sigstore tabanlı imaj imza doğrulaması** yapılabilir: belirli bir registry/repository scope'undan (`spec.scopes`) çekilen imajların, tanımlı bir **root of trust** (bir public key, Fulcio+Rekor, veya kendi PKI'nız) ile imzalanmış olması **zorunlu kılınabilir**. İmza doğrulanamayan imajların **pull edilmesi CRI-O seviyesinde engellenir** — pod `ImagePullBackOff`'ta kalır.
+OpenShift'te `ClusterImagePolicy` (cluster geneli) ve `ImagePolicy` (namespace kapsamlı) kaynakları (`config.openshift.io/v1`), **sigstore imza doğrulamasını zorunlu** kılar. Belirli bir registry/repository scope'undan (`spec.scopes`) çekilen imajlar, tanımlı **root of trust** ile (public key, Fulcio+Rekor ya da kendi PKI'nız) imzalı değilse **CRI-O imajı çekmez** ve pod `ImagePullBackOff`'ta kalır.
 
-### ⚠️ Canlı Test Edilmedi — Gerçek Risk Bulgusu
+Arka planda MCO, politikayı yeni bir rendered `MachineConfig`'e çevirir ve tüm node'lara dağıtır (`/etc/containers/policy.json`, `/etc/crio/policies/<namespace>.json`, `/etc/containers/registries.d/`). Bu dosyalar için **node disruption policy yalnızca `crio` reload** yapar: drain ve reboot olmaz.
 
-Bu POC kapsamında bir `ClusterImagePolicy` oluşturmayı denedik (test amaçlı, gerçek bir imzayla eşleşmeyen bir public key ile, `quay.io/prometheus/busybox` scope'unda). Sonuç:
+Bu bölüm Sekom lab ortamında (OpenShift 4.22, 9 node) `sekom-image-signing` namespace'inde **uçtan uca test edilmiştir**.
 
-```bash
-oc get mcp
-# NAME     ...  UPDATED   UPDATING   ...
-# master   ...  False     True       ...   <-- 3 master node reboot rollout'una girdi
-# worker   ...  False     True       ...   <-- 3 worker node reboot rollout'una girdi
-```
+### Ön Koşullar
 
-**`ClusterImagePolicy` oluşturmak, arka planda bir `MachineConfig` üretir ve bu, cluster'daki TÜM node'larda (control plane dahil) bir rolling reboot/drain döngüsünü tetikler.** Bu, namespace-scope'lu, düşük riskli bir değişiklik değil — **cluster genelinde, üretim etkisi olan bir bakım penceresi işlemidir**. Bu POC'de policy hemen silindi ve cluster ~10-15 dakika içinde stabil hâle döndü, ama bu **planlanmadan** yapılmamalı.
+- `cosign` **v2.x** (test: v2.5.3). ⚠️ cosign **v3** varsayılan olarak yeni imza biçimini (OCI referrers / bundle) kullanır. Bu biçim OpenShift internal registry'ye yazılamadı: `PUT .../manifests/... UNKNOWN`. v2'nin klasik `sha256-<digest>.sig` etiketi sorunsuz çalışır.
+- İmzalanacak imajın registry'de bulunması ve **digest** ile imzalanması.
 
-### Nasıl Yapılır (siz kendi ortamınızda, planlı bir bakım penceresinde deneyin)
-
-**1) Bir imza anahtarı üretin** (gerçek bir üretim akışında `cosign generate-key-pair` kullanılır; burada test için düz `openssl` ile de aynı formatta bir anahtar üretilebilir):
+### Adım 1 — Anahtar, namespace ve iki test imajı
 
 ```bash
-openssl ecparam -genkey -name prime256v1 -noout -out signing-key.pem
-openssl ec -in signing-key.pem -pubout -out signing-key-pub.pem
-PUBKEY_B64=$(base64 -w0 signing-key-pub.pem)
+N=sekom-image-signing
+COSIGN_PASSWORD="" cosign generate-key-pair          # cosign.key + cosign.pub
+oc create namespace $N
+oc create sa signer -n $N
+oc policy add-role-to-user system:image-builder -z signer -n $N
+
+REG=$(oc get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}')
+podman login --tls-verify=false -u signer -p "$(oc create token signer -n $N --duration=1h)" $REG
+for app in signed-app unsigned-app; do
+  podman tag <taban-imaj> $REG/$N/$app:v1
+  podman push --tls-verify=false --remove-signatures $REG/$N/$app:v1
+done
 ```
 
-**2) İmajınızı bu anahtarla imzalayın** (gerçek akış — `cosign` gerekir, bu POC'de yapılmadı):
+> `--remove-signatures` olmadan podman, kaynak imajın kendi imzaları nedeniyle `Would invalidate signatures` hatası verip push etmez.
+
+İki imaj **aynı içeriğe (aynı digest'e)** sahiptir. Fark, yalnızca `signed-app` repository'sinin imzalanacak olmasıdır.
+
+### Adım 2 — İmzalama (cluster içinde, internal registry adıyla)
+
+İmza, pod'un çekeceği referansla (`image-registry.openshift-image-registry.svc:5000/...`) atılmalıdır. Bu yüzden cosign cluster içinde bir pod olarak çalıştırıldı:
 
 ```bash
-cosign sign --key signing-key.pem <registry>/<repo>/<imaj>:<tag>
-```
+TOK=$(oc create token signer -n $N --duration=1h)
+printf '{"auths":{"image-registry.openshift-image-registry.svc:5000":{"auth":"%s"}}}' \
+  "$(printf 'signer:%s' "$TOK" | base64 -w0)" > config.json
+oc create secret generic cosign-key -n $N --from-file=cosign.key --from-file=config.json; rm -f config.json
 
-**3) `ClusterImagePolicy` oluşturun:**
+# Dikkat: 'oc get is ... .status.tags[0]' imza etiketini de döndürebilir; digest'i istag'den alın
+DIG=$(oc get istag signed-app:v1 -n $N -o jsonpath='{.image.metadata.name}')
+IMG=image-registry.openshift-image-registry.svc:5000/$N/signed-app@$DIG
 
-```yaml
-apiVersion: config.openshift.io/v1
-kind: ClusterImagePolicy
-metadata:
-  name: require-signed-myapp
+cat <<YAML | oc apply -f -
+apiVersion: v1
+kind: Pod
+metadata: {name: cosign-sign, namespace: $N}
 spec:
-  scopes:
-    - REPLACE_ME_REGISTRY/REPLACE_ME_REPO   # örn. quay.io/benim-org/benim-app
-  policy:
-    rootOfTrust:
-      policyType: PublicKey
-      publicKey:
-        keyData: ${PUBKEY_B64}
+  restartPolicy: Never
+  containers:
+  - name: cosign
+    image: ghcr.io/sigstore/cosign/cosign:v2.5.3
+    args: ["sign","--yes","--key","/k/cosign.key","--tlog-upload=false","--allow-insecure-registry","$IMG"]
+    env:
+    - {name: COSIGN_PASSWORD, value: ""}
+    - {name: DOCKER_CONFIG, value: /k}
+    volumeMounts: [{name: k, mountPath: /k}]
+  volumes: [{name: k, secret: {secretName: cosign-key}}]
+YAML
+oc logs -f cosign-sign -n $N
 ```
+
+✅ **Gerçek çıktı:** İmza `signed-app:sha256-<digest>.sig` etiketi olarak registry'ye yazıldı. İmza payload'ı:
+
+```json
+"critical": {
+  "identity": { "docker-reference": "image-registry.openshift-image-registry.svc:5000/sekom-image-signing/signed-app" },
+  "image":    { "docker-manifest-digest": "sha256:7b4cbb00..." },
+  "type": "cosign container image signature"
+}
+```
+
+`docker-reference` alanında **tag yoktur**, yalnızca repository vardır. Bu, Adım 3'teki `matchPolicy` seçimini belirler.
+
+### Adım 3 — ImagePolicy
+
+`image-policy.yaml` (keyData = `base64 -w0 cosign.pub`):
 
 ```bash
-oc apply -f cluster-image-policy.yaml
+sed "s|REPLACE_ME_COSIGN_PUB_BASE64|$(base64 -w0 cosign.pub)|" image-policy.yaml | oc apply -f -
+oc get mcp -w        # rollout'u izleyin
 ```
 
-**4) Uygulamadan önce mutlaka bekleyin ve doğrulayın:**
+✅ **Gerçek çıktı (rollout):**
+
+- Politika uygulandıktan ~95 sn sonra 3 MCP de (`master`, `worker` ve özel bir worker havuzu) `UPDATED=True` oldu.
+- Hiçbir node `NotReady` olmadı ve 9 node'un **boot ID'si değişmedi** (reboot yok).
+- Politika değişikliği (`patch`) ve silme de aynı şekilde ~90 sn'de, reboot olmadan tamamlandı.
+- Node'da oluşan dosya `/etc/crio/policies/sekom-image-signing.json`, içeriği `{"type":"sigstoreSigned","keyData":"...","signedIdentity":{"type":"matchRepository"}}`.
+
+> Eski OpenShift sürümlerinde ya da node disruption policy'leri değiştirilmiş cluster'larda aynı değişiklik **reboot** tetikleyebilir. Uygulamadan önce kontrol edin: `oc get machineconfiguration cluster -o jsonpath='{.status.nodeDisruptionPolicyStatus.clusterPolicies.files}'` → ilgili dosyalar için `Reload crio` görünmeli.
+
+### Adım 4 — Doğrulama
 
 ```bash
-watch oc get mcp
-# master ve worker pool'ları tekrar UPDATED:True, UPDATING:False, DEGRADED:False olana kadar bekleyin
+R=image-registry.openshift-image-registry.svc:5000/$N
+oc run signed-tag    -n $N --image=$R/signed-app:v1        --restart=Never --command -- sleep 3600
+oc run signed-digest -n $N --image=$R/signed-app@$DIG      --restart=Never --command -- sleep 3600
+oc run unsigned-tag  -n $N --image=$R/unsigned-app:v1      --restart=Never --command -- sleep 3600
+oc get pods -n $N
+oc get events -n $N --field-selector reason=Failed | grep -o 'rejected: [^;]*'
 ```
 
-**5) Test edin:**
+✅ **Gerçek çıktı:**
 
-```bash
-# İmzasız/yanlış imzalı bir imaj -> ImagePullBackOff beklenir
-oc run test --image=<scope-icindeki-imzasiz-imaj> --restart=Never
+| Pod | `MatchRepoDigestOrExact` | `MatchRepository` |
+|---|---|---|
+| `signed-app:v1` (tag) | ❌ `Signature for identity "...signed-app" is not accepted` | ✅ `Running` |
+| `signed-app@sha256:...` (digest) | ❌ aynı hata | ✅ `Running` |
+| `unsigned-app:v1` (aynı digest, imzasız repo) | ❌ `A signature was required, but no signature exists` | ❌ aynı (beklenen) |
 
-# İmzalı imaj -> normal calismali
-oc run test2 --image=<imzali-imaj> --restart=Never
-```
+**Bulgu:** cosign imzalarında `docker-reference` yalnızca repository içerdiği için `MatchRepoDigestOrExact` (varsayılan öneri) bu testte hem tag hem digest ile **imzalı imajı da reddetti**. cosign ile imzalanan imajlarda `matchPolicy: MatchRepository` kullanın. Farklı bir registry adıyla (örn. dış route) imzalanan imajlar için `RemapIdentity` kullanılabilir.
+
+İmzasız `unsigned-app` imajı, imzalı imajla **birebir aynı içeriğe** sahip olmasına rağmen reddedildi: doğrulama imaj içeriğine değil, ilgili repository'deki imzaya bakar.
 
 ### Pratik Öneriler
 
-1. **Önce `ImagePolicy` (namespace-scope'lu) ile başlayın**, tüm cluster'ı değil tek bir test namespace'ini etkiler — yine de aynı MachineConfig/reboot mekanizmasını tetikleyip tetiklemediğini önce küçük ölçekte doğrulayın.
-2. **Bakım penceresi planlayın** — bu, "hemen deneyelim" ile test edilecek bir özellik değil, node reboot'ları normal iş yükü kesintisine yol açabilir (PodDisruptionBudget'ları olmayan uygulamalar için özellikle).
-3. **`quay.io/openshift-release-dev/*` scope'larını asla kısıtlamayın** (yanlışlıkla dahi) — cluster'ın kendi imajlarını çekememesi cluster'ı bozabilir. Sadece kendi uygulama imajlarınızın scope'unu hedefleyin.
-4. Değişikliği geri almak isterseniz `oc delete clusterimagepolicy <ad>` — bu da **yeni bir reboot rollout'u** tetikler (eski config'e dönüş), yani "dene, olmadıysa hemen sil" döngüsü her seferinde node'ları resetler; ilk denemeden önce doğru yapılandırdığınızdan emin olun.
+1. **Önce `ImagePolicy` ile tek bir namespace'te deneyin**, sonra gerekirse `ClusterImagePolicy`'ye geçin. Cluster geneli politika, scope'taki her imajı etkiler: `openshift-*` imajlarını kapsayan bir scope cluster'ı bozabilir.
+2. İmzalamayı CI pipeline'ına ekleyin (bkz. [05 — CI/CD](../../B-UygulamaTeslimi/05-Ci-Cd/README.md)): build → push → `cosign sign <imaj>@<digest>`.
+3. Özel anahtarı (`cosign.key`) cluster'da tutmanız gerekiyorsa yalnızca imzalama namespace'inde, kısıtlı bir secret olarak saklayın; üretimde KMS ya da keyless (Fulcio/Rekor) tercih edin.
+
+### Temizlik
+
+```bash
+oc delete imagepolicy require-signed-images -n sekom-image-signing   # ~90 sn MCP rollout, reboot yok
+oc get mcp                                                            # hepsi UPDATED=True olana kadar bekleyin
+oc delete namespace sekom-image-signing
+rm -f cosign.key cosign.pub; podman logout --all
+```
+
+✅ **Gerçek çıktı:** Silme sonrası rollout ~80 sn sürdü; node'daki `/etc/crio/policies/` dizini boşaldı ve boot ID'ler değişmedi.
