@@ -1,6 +1,6 @@
 # Sekom OpenShift POC
 
-Bu repo, Sekom'un müşteri ortamlarında uyguladığı OpenShift POC senaryolarını içerir. Klasörler **uygulama sırasına göre** gruplanmış (A–E) ve numaralandırılmıştır (01–17). Sıra, rehberler arasındaki bağımlılıklara göre belirlendi: platform temeli → uygulama teslimi → ağ ve güvenlik → operasyon → sanallaştırma. Bir rehberin kurduğu kaynak (namespace, DPA, Loki vb.) sonraki rehberlerde kullanılıyor; bu yüzden sırayla gidilmesi önerilir.
+Bu repo, Sekom'un müşteri ortamlarında uyguladığı OpenShift POC senaryolarını içerir. Klasörler **uygulama sırasına göre** gruplanmış (A–E) ve numaralandırılmıştır (01–18). Sıra, rehberler arasındaki bağımlılıklara göre belirlendi: platform temeli → uygulama teslimi → ağ ve güvenlik → operasyon → sanallaştırma. Bir rehberin kurduğu kaynak (namespace, DPA, Loki vb.) sonraki rehberlerde kullanılıyor; bu yüzden sırayla gidilmesi önerilir.
 
 ## Akış
 
@@ -29,6 +29,7 @@ Bu repo, Sekom'un müşteri ortamlarında uyguladığı OpenShift POC senaryolar
 | **E** | **[Virtualization](E-Virtualization)** | | |
 | 17 | [OpenShift Virtualization](E-Virtualization/17-Virtualization/README.md) | Template, ISO, golden image, live migration, snapshot, Multus VLAN, affinity, VM yedekleme | OpenShift Virtualization, ODF, NMState, 16 |
 | 17.1 | ↳ [Windows Boot Source](E-Virtualization/17-Virtualization/windows/README.md) | Windows template'leri için imaj sağlamanın 4 yolu | 17, (yöntem 3 için) OpenShift Pipelines |
+| 18 | [MTV ile Taşıma](E-Virtualization/18-MTV/README.md) | VMware vSphere / OVA'dan VM taşıma (provider, haritalar, plan) | Migration Toolkit for Virtualization, 17 |
 
 ## POC Öncesi Kontrol
 

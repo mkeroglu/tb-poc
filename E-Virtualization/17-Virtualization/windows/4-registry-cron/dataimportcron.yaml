@@ -15,7 +15,7 @@ spec:
     spec:
       source:
         registry:
-          url: docker://test-registry-sekom-ocp-poc-win.apps.bedrock.linuxera.hq/windows/win2k22:latest
+          url: docker://REPLACE_ME_REGISTRY/windows/win2k22:latest
           certConfigMap: sekom-poc-registry-ca   # registry TLS CA; hem bu namespace'te hem openshift-cnv'de olmalı (README)
           # secretRef: registry-pull-secret   # kimlik doğrulamalı registry için (accessKeyId/secretKey)
       storage:

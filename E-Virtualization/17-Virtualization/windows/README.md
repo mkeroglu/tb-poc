@@ -4,7 +4,9 @@
 
 OpenShift Virtualization kurulduğunda **Windows template'leri de gelir** (Windows 10/11, Server 2016/2019/2022/2025). Bunlar için ayrıca bir config yapmak gerekmez. RHEL template'lerinden farkı, Windows template'lerinin kullanacağı **işletim sistemi imajının (boot source) gelmemesidir**. Microsoft lisansı nedeniyle Red Hat Windows imajı dağıtamaz; imajı kurum sağlamalıdır.
 
-Bu doküman Windows boot source'u sağlamanın **dört yolunu** anlatır. Dört yol da Bedrock cluster'ında (OpenShift 4.22.6, OpenShift Virtualization 4.22.9, ODF 4.22.4) **`sekom-ocp-poc-win` namespace'inde, Windows Server 2022 Evaluation ISO'su ile uçtan uca canlı test edilmiştir**. Her yolun sonunda, Red Hat'in hazır `windows2k22-server-medium` template'inden VM açılmış ve VM'in Windows Server 2022 olarak açıldığı, ilk açılış ayarlarının uygulandığı ve RDP'nin (3389) erişilebilir olduğu doğrulanmıştır.
+Bu doküman Windows boot source'u sağlamanın **dört yolunu** anlatır. Dört yol da Sekom lab ortamında (OpenShift 4.22.6, OpenShift Virtualization 4.22.9, ODF 4.22.4) **`sekom-ocp-poc-win` namespace'inde, Windows Server 2022 Evaluation ISO'su ile uçtan uca canlı test edilmiştir**. Her yolun sonunda, Red Hat'in hazır `windows2k22-server-medium` template'inden VM açılmış ve VM'in Windows Server 2022 olarak açıldığı, ilk açılış ayarlarının uygulandığı ve RDP'nin (3389) erişilebilir olduğu doğrulanmıştır.
+
+> **Test turları:** Dört yöntem ilk turda uçtan uca test edildi. Sekom adlandırmasına geçilen ikinci turda **yöntem 3 (pipeline)** yeniden uçtan uca çalıştırıldı ve oluşan imajdan hazır template ile VM açılıp ilk açılış ayarları ve RDP yeniden doğrulandı (bölüm 4). Yöntem 1, 2 ve 4 aynı manifest'lerle ikinci turda tekrar çalıştırılmadı.
 
 | # | Yöntem | Ne zaman | Canlı test sonucu |
 |---|---|---|---|
@@ -160,7 +162,7 @@ virtctl image-upload dv win2k22-uploaded -n sekom-ocp-poc-win \
 oc apply -f 1-upload/datasource.yaml        # DataSource win2k22-uploaded
 ```
 
-> CDI `qcow2`, `raw`, `vmdk`, `vhd(x)` ve bunların `.gz`/`.xz` sıkıştırılmış hallerini kabul eder ve raw'a çevirir. VMware'den gelen `.vmdk` doğrudan yüklenebilir. Bir VMware VM'ini bütün olarak taşımak için ise **Migration Toolkit for Virtualization (MTV)** daha uygundur (Bedrock'ta kurulu: `openshift-mtv`).
+> CDI `qcow2`, `raw`, `vmdk`, `vhd(x)` ve bunların `.gz`/`.xz` sıkıştırılmış hallerini kabul eder ve raw'a çevirir. VMware'den gelen `.vmdk` doğrudan yüklenebilir. Bir VMware VM'ini bütün olarak taşımak için ise **Migration Toolkit for Virtualization (MTV)** daha uygundur (bkz. [18 — MTV ile Taşıma](../../18-MTV/README.md)).
 
 ✅ **Gerçek çıktı:** Yükleme **5 dk 15 sn** sürdü, `DataSource win2k22-uploaded` → `Ready=True`. Template'ten açılan `win-from-upload`:
 
@@ -260,7 +262,7 @@ RDP 3389 ACIK -> 10.128.2.148 (VM başlatıldıktan 412 sn sonra)
 
 **Ön koşullar:**
 
-- OpenShift Pipelines kurulu (Bedrock: `openshift-pipelines-operator-rh.v1.23.1`).
+- OpenShift Pipelines kurulu (lab testinde: `openshift-pipelines-operator-rh.v1.23.1`).
 - Hub resolver açık: `oc get cm resolvers-feature-flags -n openshift-pipelines` → `enable-hub-resolver: "true"`. Pipeline ve task'lar ArtifactHub'daki `kubevirt-tekton-pipelines` kataloğundan çekilir; cluster'ın internete çıkışı olmalıdır. Kapalı ağda pipeline YAML'ı `https://github.com/kubevirt/kubevirt-tekton-tasks/releases` adresinden alınıp cluster'a uygulanır ve `pipelineRef` yerel isimle kullanılır.
 - Namespace'te `pipeline` ServiceAccount'u (OpenShift Pipelines otomatik oluşturur; `openshift-*` / `kube-*` namespace'lerinde oluşturmaz).
 
@@ -286,6 +288,8 @@ tkn pipelinerun logs -f -n sekom-ocp-poc-win        # ya da Console: Pipelines �
 | **Toplam** | | **31 dk**, `Succeeded` |
 
 Sonuç: `DataVolume win2k22` (20Gi, RWX Block) + `DataSource win2k22`. Geçici VM, ISO ve ConfigMap'ler pipeline tarafından silindi.
+
+✅ **İkinci test turu:** Pipeline **22 dk**'da `Succeeded` (ISO indirme + düzenleme ~11 dk, gözetimsiz kurulum + sysprep ~10 dk). Template'ten açılan VM: `Windows Server 2022 Datacenter Evaluation`, `timezone: Turkey Standard Time`, rastgele hostname; **RDP 3389, VM başlatıldıktan 305 sn sonra açık**.
 
 Template'ten açılan `win-from-pipeline`:
 
@@ -329,7 +333,7 @@ podman push <registry>/windows/win2k22:latest
 
 `Containerfile`, diski `/disk/` altına qemu kullanıcısına (UID 107) ait olarak koyar. Disk **qcow2 ya da raw** olmalıdır; `.gz`/`.xz` registry kaynağında açılmaz (bkz. 5.2).
 
-> **Test ortamı notu:** Bedrock'un dahili image registry'si `emptyDir` üzerinde çalışıyor. Büyük bir imaj node diskini doldurabilir ve pod yeniden başlarsa imaj kaybolur. Quay kurulu olsa da test hesabı yoktu. Bu yüzden testte kurum registry'sini temsil etmek için `4-registry-cron/test-registry.yaml` ile `sekom-ocp-poc-win` içinde ODF PVC'li geçici bir OCI registry kuruldu. Üretimde kurumun Quay/Harbor/Nexus'u kullanılır.
+> **Test ortamı notu:** Lab ortamının dahili image registry'si `emptyDir` üzerinde çalışıyor. Büyük bir imaj node diskini doldurabilir ve pod yeniden başlarsa imaj kaybolur. Quay kurulu olsa da test hesabı yoktu. Bu yüzden testte kurum registry'sini temsil etmek için `4-registry-cron/test-registry.yaml` ile `sekom-ocp-poc-win` içinde ODF PVC'li geçici bir OCI registry kuruldu. Üretimde kurumun Quay/Harbor/Nexus'u kullanılır.
 
 ✅ **Gerçek çıktı:** Push (qcow2, 4,6 GiB) **4 dk 35 sn** sürdü. Registry'de `{"name":"windows/win2k22","tags":["20260930-2","20260930","latest"]}`.
 
@@ -341,7 +345,7 @@ for ns in sekom-ocp-poc-win openshift-cnv; do
   oc create configmap sekom-poc-registry-ca -n $ns --from-file=ca.crt=./registry-ca.crt
 done
 
-oc apply -f 4-registry-cron/dataimportcron.yaml
+sed "s|REPLACE_ME_REGISTRY|<registry-host>|" 4-registry-cron/dataimportcron.yaml | oc apply -f -
 ```
 
 - `schedule: "0 3 * * 1"`: her Pazartesi 03:00'te yeni digest var mı diye bakar. İlk oluşturulduğunda hemen bir kez yoklar.
@@ -416,7 +420,7 @@ spec:
                   storage: 60Gi
 ```
 
-> Bu adım paylaşımlı Bedrock cluster'ında **uygulanmadı** (HCO cluster genelidir). Aynı mekanizma yukarıda namespace seviyesinde canlı test edilmiştir.
+> Bu adım paylaşımlı lab cluster'ında **uygulanmadı** (HCO cluster genelidir). Aynı mekanizma yukarıda namespace seviyesinde canlı test edilmiştir.
 
 ---
 
@@ -454,7 +458,7 @@ EOF
 
 Ardından `oc get datasource win2k22 -n openshift-virtualization-os-images` → `Ready=True` olur ve `windows2k22-*` template'leri doğrudan kullanılabilir.
 
-> Bu adım paylaşımlı Bedrock cluster'ında **uygulanmadı**. Bütün cluster kullanıcılarının Windows template'lerini etkileyeceği için platform sahibinin onayıyla yapılmalıdır.
+> Bu adım paylaşımlı lab cluster'ında **uygulanmadı**. Bütün cluster kullanıcılarının Windows template'lerini etkileyeceği için platform sahibinin onayıyla yapılmalıdır.
 
 ---
 
