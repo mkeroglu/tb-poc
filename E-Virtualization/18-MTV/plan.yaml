@@ -1,0 +1,27 @@
+# Hangi VM'lerin, hangi haritalarla, hangi namespace'e taşınacağı
+apiVersion: forklift.konveyor.io/v1beta1
+kind: Plan
+metadata:
+  name: sekom-ova-plan
+  namespace: openshift-mtv
+spec:
+  warm: false                         # cold migration (OVA için zorunlu; vSphere'de warm da olur)
+  targetNamespace: sekom-mtv-demo
+  provider:
+    source:      {name: REPLACE_ME_SOURCE_PROVIDER, namespace: openshift-mtv}
+    destination: {name: host, namespace: openshift-mtv}
+  map:
+    network: {name: sekom-ova-network-map, namespace: openshift-mtv}
+    storage: {name: sekom-ova-storage-map, namespace: openshift-mtv}
+  vms:
+    - id: REPLACE_ME_SOURCE_VM_ID
+      targetName: REPLACE_ME_TARGET_VM_NAME   # kaynak ad geçersizse (boşluk, büyük harf) zorunlu
+---
+# Planı çalıştırır (her Migration, planın bir çalıştırmasıdır)
+apiVersion: forklift.konveyor.io/v1beta1
+kind: Migration
+metadata:
+  name: sekom-ova-migration-1
+  namespace: openshift-mtv
+spec:
+  plan: {name: sekom-ova-plan, namespace: openshift-mtv}

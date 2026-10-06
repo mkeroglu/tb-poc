@@ -1,6 +1,6 @@
 # 17.1 — Windows VM'ler için Boot Source (Golden Image) Hazırlama
 
-> [← 17 — OpenShift Virtualization](../README.md) · [POC akışı](../../../README.md)
+> [← 17 — OpenShift Virtualization](../README.md) · [POC akışı](../../../README.md) · [18 — MTV ile Taşıma →](../../18-MTV/README.md)
 
 OpenShift Virtualization kurulduğunda **Windows template'leri de gelir** (Windows 10/11, Server 2016/2019/2022/2025). Bunlar için ayrıca bir config yapmak gerekmez. RHEL template'lerinden farkı, Windows template'lerinin kullanacağı **işletim sistemi imajının (boot source) gelmemesidir**. Microsoft lisansı nedeniyle Red Hat Windows imajı dağıtamaz; imajı kurum sağlamalıdır.
 
