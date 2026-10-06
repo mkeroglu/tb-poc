@@ -4,7 +4,7 @@
 
 Bu doküman OpenShift Virtualization (KubeVirt) ile sanal makine yaşam döngüsünü uçtan uca anlatır: template'ten VM, ISO'dan kurulum, golden image, ODF depolama, live migration, snapshot/restore, Multus ile VLAN ağı ve affinity / anti-affinity / nodeSelector ile yerleşim.
 
-Her adım hem **CLI** (`oc` / `virtctl`) hem **Web Console** için verilmiştir. CLI adımlarının tamamı Bedrock cluster'ında (OpenShift 4.22.6, OpenShift Virtualization 4.22.9, ODF 4.22.4, bare-metal HPE + QCT worker'lar) **`sekom-ocp-poc-virt` namespace'inde uçtan uca canlı test edilmiştir**; bölümlerdeki "✅ Gerçek çıktı" satırları bu testlerden alınmıştır. Console adımları 4.22 arayüzüne göre yazılmıştır.
+Her adım hem **CLI** (`oc` / `virtctl`) hem **Web Console** için verilmiştir. CLI adımlarının tamamı Sekom lab ortamında (OpenShift 4.22, OpenShift Virtualization 4.22.9, ODF 4.22, bare-metal worker'lar) **`sekom-ocp-poc-virt` namespace'inde uçtan uca canlı test edilmiştir** (iki ayrı test turu); bölümlerdeki "✅ Gerçek çıktı" satırları bu testlerden alınmıştır. Console adımları 4.22 arayüzüne göre yazılmıştır.
 
 Senaryo sırası:
 
@@ -37,7 +37,7 @@ Dosyalar:
 | `data-disk-dv.yaml` | Hotplug edilecek veri diski |
 | `live-migration.yaml` | `VirtualMachineInstanceMigration` |
 | `vm-snapshot.yaml`, `vm-restore.yaml` | Snapshot ve restore |
-| `nad-vm-vlan.yaml` | VLAN 112 `NetworkAttachmentDefinition` |
+| `nad-vm-vlan.yaml` | VM'leri kurumsal bir VLAN'a bağlayan `NetworkAttachmentDefinition` (parametrik) |
 | `scheduling/*.yaml` | nodeSelector, node affinity, anti-affinity, affinity VM'leri |
 | `oadp/namespace.yaml`, `oadp/cross-namespace-clone-rbac.yaml` | Backup testi namespace'i ve namespace'ler arası clone izni |
 | `oadp/backup.yaml`, `oadp/restore.yaml` | Velero Backup / Restore |
@@ -54,7 +54,7 @@ oc get nodes -l kubevirt.io/schedulable=true \
   -o custom-columns=NODE:.metadata.name,KVM:'.status.allocatable.devices\.kubevirt\.io/kvm'
 ```
 
-✅ **Gerçek çıktı:** 6 worker'ın tamamında (`hpeworker01-03`, `worker01-03`) `KVM: 1k`.
+✅ **Gerçek çıktı:** VM çalıştırabilen 6 worker'ın tamamında `KVM: 1k`.
 
 > **Önemli:** Worker'lar bir hypervisor üzerinde VM olarak çalışıyorsa (örn. VMware), ESXi'de ilgili VM'ler için **"Expose hardware assisted virtualization to the guest OS"** açılmalıdır. Açılmazsa `/dev/kvm` olmaz ve VM'ler ya hiç başlamaz ya da sadece çok yavaş yazılımsal emülasyonla (`spec.configuration.developerConfiguration.useEmulation`) çalışır. Bu ayar sadece demo içindir, performans testi yapılmamalıdır.
 
@@ -71,7 +71,7 @@ oc get storageprofile ocs-storagecluster-ceph-rbd-virtualization -o jsonpath='{.
 
 ## 2. Operatör Kurulumu
 
-> Bedrock cluster'ında operatör zaten kurulu olduğu için bu adım yeniden uygulanmadı; sadece durum doğrulandı. Aşağıdaki YAML'lar cluster'daki gerçek subscription ile aynıdır (`kubevirt-hyperconverged` / `stable` / `redhat-operators`).
+> Lab ortamında operatör zaten kurulu olduğu için bu adım yeniden uygulanmadı; sadece durum doğrulandı. Aşağıdaki YAML'lar cluster'daki gerçek subscription ile aynıdır (`kubevirt-hyperconverged` / `stable` / `redhat-operators`).
 
 **CLI:**
 
@@ -164,7 +164,7 @@ virtctl start fedora-from-template -n sekom-ocp-poc-virt     # template'ler VM'i
 oc get dv,vm,vmi -n sekom-ocp-poc-virt
 ```
 
-✅ **Gerçek çıktı:** DataVolume **19 saniyede** `Succeeded`, VM **20 saniyede** `Running`. Disk sıfırdan indirilmedi, ODF üzerinde boot source snapshot'ından klonlandı. Disk storage profile sayesinde otomatik olarak `ocs-storagecluster-ceph-rbd-virtualization`'da `RWX Block` açıldı.
+✅ **Gerçek çıktı:** VM iki test turunda da **19–20 saniyede** `Running` oldu (DataVolume `Succeeded`). Disk sıfırdan indirilmedi, ODF üzerinde boot source snapshot'ından klonlandı. Disk storage profile sayesinde otomatik olarak `ocs-storagecluster-ceph-rbd-virtualization`'da `RWX Block` açıldı.
 
 **Erişim:**
 
@@ -195,7 +195,6 @@ Hazır template dışa alınıp değiştirilerek kuruma özel bir template yapı
 - Label `template.kubevirt.io/type: vm` (kullanıcı template'i). SSP operatörünün yönettiğini belirten `app.kubernetes.io/*` label'ları kaldırıldı.
 - Disk her zaman `ocs-storagecluster-ceph-rbd-virtualization` üzerinde açılır.
 - Yeni **`SSH_KEY_SECRET`** parametresi eklendi: anahtar VM'e otomatik enjekte edilir.
-- `hpe` rollü node'lar tercih edilir (preferred node affinity).
 
 ```bash
 oc apply -f custom-template.yaml
@@ -206,7 +205,7 @@ virtctl start sekom-vm-from-custom-template -n sekom-ocp-poc-virt
 virtctl ssh fedora@vmi/sekom-vm-from-custom-template -n sekom-ocp-poc-virt -i ./vmkey
 ```
 
-✅ **Gerçek çıktı:** Parametre listesinde `SSH_KEY_SECRET ... vm-ssh-key` görüldü. VM `hpeworker01`'e (hpe tercihine uygun) yerleşti, disk `ocs-storagecluster-ceph-rbd-virtualization`'da açıldı ve ek bir patch gerekmeden `virtctl ssh` ile anahtarla girildi.
+✅ **Gerçek çıktı:** Parametre listesinde `SSH_KEY_SECRET ... vm-ssh-key` görüldü. Disk `ocs-storagecluster-ceph-rbd-virtualization`'da açıldı ve ek bir patch gerekmeden `virtctl ssh` ile anahtarla girildi.
 
 **Console:**
 
@@ -297,6 +296,7 @@ virtctl ssh fedora@vmi/sekom-web-01 -n sekom-ocp-poc-virt -i ./vmkey \
 |---|---|---|
 | hostname | `sekom-web-01` | `sekom-web-02` |
 | machine-id | `92a2346b...` | `de0affe7...` |
+| machine-id (2. tur) | `298ee517...` | `f29cef4c...` |
 | SSH host key | `SHA256:omHiiCKc...` | `SHA256:8bCZoXDD...` |
 | MAC | `02:ed:88:63:8b:48` | `02:ed:88:63:8b:49` |
 | `/etc/sekom-golden` | `Sekom kurumsal ayar v1` | `Sekom kurumsal ayar v1` |
@@ -414,7 +414,7 @@ ERASE_DISKS=/dev/vda setup-alpine -e -f /tmp/answers
 poweroff
 ```
 
-✅ **Gerçek çıktı:** Paketler internetten (pod ağı üzerinden) indirildi, `Installation is complete. Please reboot.`, `SETUP_RC=0`.
+✅ **Gerçek çıktı:** Paketler internetten (pod ağı üzerinden) indirildi, `Installation is complete. Please reboot.`, `SETUP_RC=0`. İkinci turda ISO yükleme 17 sn, kurulum 24 sn sürdü.
 
 ### 4.4 CD-ROM'u çıkarma ve diskten boot
 
@@ -521,7 +521,8 @@ oc get vmi -n sekom-ocp-poc-virt \
 
 ```bash
 # VM içinde
-nohup ping -i 0.2 -D 10.128.0.1 > /tmp/ping.log 2>&1 &
+GW=$(ip route | awk '/default/{print $3}')     # pod ağının gateway'i
+nohup ping -i 0.2 -D $GW > /tmp/ping.log 2>&1 &
 nohup sh -c 'while true; do date +%T.%N >> /tmp/counter.log; sleep 0.2; done' >/dev/null 2>&1 &
 ```
 
@@ -535,14 +536,14 @@ oc get vmi fedora-from-template -n sekom-ocp-poc-virt -o jsonpath='{.status.migr
 
 ✅ **Gerçek çıktı:**
 
-| Ölçüm | Sonuç |
-|---|---|
-| Kaynak → hedef | `hpeworker01` → `hpeworker03` |
-| Mod | `PreCopy` |
-| Süre | 10:29:46 → 10:29:53 (**7 sn**) |
-| VM içi ping (0.2 sn aralık, 209 paket) | **0 paket kaybı** |
-| En büyük ping / sayaç boşluğu | **0.58 sn** (switchover anı; normal aralık 0.2 sn) |
-| VM boot zamanı (`uptime -s`) | Değişmedi (`10:22:46`), VM yeniden başlamadı |
+| Ölçüm | 1. tur | 2. tur |
+|---|---|---|
+| Kaynak → hedef | worker-A → worker-B | worker-A → worker-B |
+| Mod | `PreCopy` | `PreCopy` |
+| Süre | **7 sn** | **9 sn** |
+| VM içi ping (0.2 sn aralık) | 209 paket, **0 kayıp** | 246 paket, **0 kayıp** |
+| En büyük ping / sayaç boşluğu (switchover) | 0,58 sn | 0,38 / 0,42 sn |
+| VM boot zamanı (`uptime -s`) | Değişmedi | Değişmedi |
 
 **Console:** VM → **Actions → Migrate → Compute** (ya da VM listesinde **⋮ → Migrate**). İlerleme **Virtualization → Overview → Migrations** sekmesinde izlenir.
 
@@ -577,17 +578,42 @@ virtctl start fedora-from-template -n sekom-ocp-poc-virt
 
 ✅ **Gerçek çıktı:** Restore öncesi home dizininde `snapshot-sonrasi.txt` vardı. Restore sonrası yalnızca `onemli-dosya.txt` kaldı, içeriği `snapshot oncesi veri`. Sonradan oluşturulan dosya kayboldu, silinen dosya geri geldi.
 
+> ⚠️ **Hotplug disk + SELinux: snapshot başarısız olabilir.** İkinci test turunda VM'e 6.1'deki gibi hotplug disk takılıp `/data`'ya bağlanmıştı. Snapshot 5 dakika sonra `Failed` oldu:
+>
+> ```
+> command Freeze failed: "LibvirtError(Code=113, ... guest agent command failed: unable to execute QEMU agent command
+> 'guest-fsfreeze-freeze': failed to open /data: Permission denied')"
+> ```
+>
+> **Sebep:** Fedora/RHEL'de `qemu-guest-agent` kısıtlı bir SELinux bağlamında (`virt_qemu_ga_t`) çalışır. Yeni oluşturulan XFS'nin kök dizini etiketsiz (`unlabeled_t`) kaldığı için agent bağlama noktasını açamaz ve dosya sistemini donduramaz.
+>
+> **Çözüm:** Diski bağladıktan sonra bağlama noktasını etiketleyin (kalıcı bağlama için `/etc/fstab`'a eklemeden önce de geçerlidir):
+>
+> ```bash
+> sudo restorecon -v /data      # Relabeled /data from ...:unlabeled_t:s0 to ...:default_t:s0
+> ```
+>
+> ✅ **Gerçek çıktı:** `restorecon` sonrası snapshot **3 sn**'de `Succeeded` oldu ve bu kez **kök disk + hotplug veri diski** için iki VolumeSnapshot alındı. Restore (**2 sn**) sonrası hem home dizinindeki dosya hem de `/data/test.txt` snapshot anındaki haline döndü.
+>
+> Snapshot başarısız olursa ona bağlı bir `VirtualMachineRestore` da tamamlanmaz ve VM'i kapalı bırakır; önce `oc get vmsnapshot` ile `Succeeded` olduğu doğrulanmalıdır.
+
 **Console:** VM → **Snapshots** sekmesi → **Take snapshot**. Geri dönmek için VM'i durdurun → snapshot'ın **⋮ → Restore VirtualMachine from snapshot**. Snapshot'tan **ayrı yeni bir VM** de oluşturulabilir: **⋮ → Create VirtualMachine**.
 
 ---
 
 ## 9. Multus — VM'e VLAN (LAN) Arayüzü
 
-VM'e pod ağına ek olarak gerçek LAN'dan (VLAN 112) bir NIC eklenir. Böylece VM, LAN'daki diğer sunucular gibi doğrudan IP ile erişilebilir olur.
+VM'e pod ağına ek olarak kurumsal bir VLAN'dan NIC eklenir. Böylece VM, LAN'daki diğer sunucular gibi doğrudan IP ile erişilebilir olur.
+
+| Parametre | Anlamı | Lab testinde |
+|---|---|---|
+| `REPLACE_ME_BRIDGE` | Node'larda NNCP ile oluşturulmuş linux-bridge | `br-vm` |
+| `REPLACE_ME_VLAN_ID` | VM'lerin bağlanacağı VLAN | kurumsal sunucu VLAN'ı (DHCP var) |
+| Kurumsal ağ (route için) | VM'e erişecek istemcilerin bulunduğu ağ(lar) | `<KURUM_AGI>/16` |
 
 ### 9.1 Node tarafı (NNCP)
 
-Bedrock'ta tüm VM node'larında `br-vm` linux-bridge'i **NMState** (`NodeNetworkConfigurationPolicy`) ile zaten kuruludur (`br-vm` / `br-vm-for-hpe`, trunk port). Bu yüzden node ağına dokunulmadı. Sıfırdan kurulumda NNCP örneği:
+Node'larda, ikinci bir fiziksel NIC'e (switch'te **trunk**) bağlı bir linux-bridge **NMState** (`NodeNetworkConfigurationPolicy`) ile oluşturulur. Lab ortamında bu bridge zaten kurulu olduğu için node ağına dokunulmadı. Örnek NNCP:
 
 ```yaml
 apiVersion: nmstate.io/v1
@@ -615,49 +641,70 @@ spec:
 ```
 
 ```bash
-oc get nncp          # br-vm  Available  SuccessfullyConfigured
+oc get nncp          # <bridge>  Available  SuccessfullyConfigured
 ```
+
+> NNCP uygulamak node ağ yapılandırmasını değiştirir; yanlış port seçimi node'un ağ bağlantısını kesebilir. Önce tek bir node'da (`nodeSelector` ile) deneyin.
 
 ### 9.2 NetworkAttachmentDefinition
 
 ```bash
-oc apply -f nad-vm-vlan.yaml      # type: bridge, bridge: br-vm, vlan: 112
+sed -e 's/REPLACE_ME_BRIDGE/br-vm/g' -e 's/REPLACE_ME_VLAN_ID/<vlan-no>/' nad-vm-vlan.yaml | oc apply -f -
 ```
 
-**Console:** **Networking → NetworkAttachmentDefinitions → Create** → **Network Type: Linux bridge**, **Bridge name** `br-vm`, **VLAN tag** `112`.
+**Console:** **Networking → NetworkAttachmentDefinitions → Create** → **Network Type: Linux bridge**, **Bridge name** `<bridge>`, **VLAN tag** `<vlan-no>`.
 
 ### 9.3 Çalışan VM'e NIC ekleme (hotplug)
 
-Cluster'ın `vmRolloutStrategy` değeri `LiveUpdate` olduğundan NIC, VM kapatılmadan eklenir. KubeVirt bunu arka planda otomatik bir live migration ile uygular.
+> ⚠️ **Önce VM içinde otomatik DHCP'yi kapatın.** Fedora/RHEL'de NetworkManager yeni NIC'e **kendiliğinden** DHCP ile IP alır ("Wired connection 1"). Kurumsal DHCP havuzu statik kullanılan IP'leri de dağıtıyorsa VM, NIC takıldığı anda başka bir sunucunun IP'sini alır. Lab ortamında bu **iki kez** yaşandı: ilkinde başka bir VM'in statik ikinci IP'si (bir VIP), ikincisinde o an kapalı olan başka bir VM'in IP'si dağıtıldı.
+>
+> ```bash
+> # VM içinde, NIC takılmadan ÖNCE
+> printf "[main]\nno-auto-default=*\n" | sudo tee /etc/NetworkManager/conf.d/99-no-auto-default.conf
+> sudo systemctl reload NetworkManager
+> ```
+
+Cluster'ın `vmRolloutStrategy` değeri `LiveUpdate` olduğundan NIC, VM kapatılmadan eklenir; KubeVirt bunu arka planda otomatik bir live migration ile uygular:
 
 ```bash
+oc get kubevirt -n openshift-cnv -o jsonpath='{.items[0].spec.configuration.vmRolloutStrategy}'   # LiveUpdate
 oc patch vm fedora-from-template -n sekom-ocp-poc-virt --type=json -p '[
-  {"op":"add","path":"/spec/template/spec/domain/devices/interfaces/-","value":{"name":"vlan112","bridge":{}}},
-  {"op":"add","path":"/spec/template/spec/networks/-","value":{"name":"vlan112","multus":{"networkName":"vlan-112"}}}]'
-
+  {"op":"add","path":"/spec/template/spec/domain/devices/interfaces/-","value":{"name":"vlan","bridge":{}}},
+  {"op":"add","path":"/spec/template/spec/networks/-","value":{"name":"vlan","multus":{"networkName":"vm-vlan"}}}]'
 oc get vmim -n sekom-ocp-poc-virt          # kubevirt-workload-update-xxxxx  Succeeded
 ```
 
-**Console:** VM → **Configuration → Network** → **Add network interface** → **Network**: `vlan-112`, **Type**: Bridge → **Save**.
+**Console:** VM → **Configuration → Network** → **Add network interface** → **Network**: `vm-vlan`, **Type**: Bridge → **Save**.
 
-✅ **Gerçek çıktı:** Otomatik migration `Succeeded`. VM içinde yeni NIC (`enp2s0`) göründü. NetworkManager, VLAN 112'deki kurumsal DHCP'den **`10.134.112.101/24`** aldı (çakışma kontrolü: `arping -D` → 0 cevap).
+✅ **Gerçek çıktı:** Otomatik migration `Succeeded`, VM içinde yeni NIC (`enp2s0`) `UP` ama **IP'siz** (otomatik DHCP kapalı olduğu için).
 
-### 9.4 Routing: LAN'dan erişim
+### 9.4 IP alma (çakışma kontrolüyle) ve routing
 
-VM'de iki arayüz olduğu için **iki default route** oluşur. Pod ağı (`enp1s0`, metric 100) önde olduğundan, LAN'dan gelen isteklerin cevabı yanlış arayüzden (NAT'lı pod ağından) çıkar ve bağlantı kurulamaz.
-
-✅ **Gerçek çıktı (sorun):** Bastion'dan (`10.134.62.105`) `10.134.112.101`'e ping `%100 kayıp`. VM içinden ise `ping -I enp2s0 10.134.112.1` ve bastion'a ping başarılıydı (asimetrik routing).
-
-Çözüm: VLAN arayüzünden default route alma, sadece kurumsal ağları o arayüzden yönlendir:
+VM'de iki arayüz olduğu için VLAN arayüzü de default route alırsa, LAN'dan gelen isteklerin cevabı yanlış arayüzden (NAT'lı pod ağından) çıkar ve bağlantı kurulamaz (asimetrik routing). Bu yüzden VLAN arayüzünden **default route alınmaz**, sadece kurumsal ağlar o arayüzden yönlendirilir. `ipv4.dad-timeout`, IP'yi kullanmadan önce ARP ile çakışma kontrolü yapar:
 
 ```bash
-# VM içinde (NetworkManager)
-sudo nmcli con mod "Wired connection 1" connection.id vlan112 \
-  ipv4.never-default yes ipv4.routes "10.134.0.0/16 10.134.112.1"
-sudo nmcli con up vlan112
+# VM içinde
+sudo nmcli con add type ethernet ifname enp2s0 con-name vm-vlan \
+  ipv4.method auto ipv4.dad-timeout 3000 ipv4.never-default yes \
+  ipv4.routes "<KURUM_AGI>/16 <VLAN_GATEWAY>" ipv6.method disabled
+sudo nmcli con up vm-vlan
+ip -br -4 a show enp2s0
+sudo arping -D -c 3 -w 4 -I enp2s0 <alınan-IP>      # 0 = başka cevap veren yok
 ```
 
-✅ **Gerçek çıktı:** Bastion'dan `10.134.112.101`'e ping `0% packet loss`. **Doğrudan LAN IP'sine SSH** başarılı (`LAN IP uzerinden dogrudan SSH OK: fedora-from-template`). İnternet çıkışı pod ağından devam etti (`https://quay.io` → `200`).
+✅ **Gerçek çıktı:**
+
+| Kontrol | Sonuç |
+|---|---|
+| VLAN arayüzü | DHCP'den `<VLAN>.181/24`; route `<KURUM_AGI>/16 via <VLAN_GATEWAY> dev enp2s0` |
+| `arping -D` | `rc=0` (başka cevap veren yok) |
+| Kurumsal ağdaki başka bir sunucudan ping | `3 received, 0% packet loss` |
+| O sunucudan VM'in LAN IP'sine doğrudan SSH | Başarılı |
+| VM'in internet çıkışı | Pod ağından devam etti (`https://quay.io` → `200`) |
+
+İlk test turunda route verilmeden yapılan denemede (VLAN arayüzü default route alınca) dış sunucudan VM'e ping `%100 kayıp` vermişti; route çözümü uygulanınca `0% kayıp` oldu.
+
+> `arping -D` ile çakışma çıkmasa bile, IP'yi statik kullanan cihaz o an **kapalıysa** çakışma daha sonra ortaya çıkar. İkinci turda DHCP'nin verdiği IP'nin, kapalı bir VM'in IP'si olduğu fark edildi ve test biter bitmez bırakıldı (`nmcli con down`). Canlı ortamda VM'lere ya IPAM/DHCP ekibinden **ayrılmış ve rezerve edilmiş** bir blok verilmeli ya da statik IP atanmalıdır.
 
 > Guest agent'ın raporladığı IP (`oc get vmi ... .status.interfaces`) VM içinde yapılan değişikliklerden sonra birkaç saniye eski kalabilir. Doğrulamayı VM içinden (`ip -br a`) yapın.
 
@@ -667,33 +714,42 @@ sudo nmcli con up vlan112
 
 VM'ler virt-launcher pod'ları içinde çalıştığı için Kubernetes'in tüm scheduling kuralları `spec.template.spec` altında aynen kullanılır. KubeVirt her virt-launcher pod'una otomatik olarak `vm.kubevirt.io/name=<vm-adı>` label'ını koyar. VM-VM affinity kurallarında bu label kullanılabilir.
 
-Tüm VM'ler instancetype `u1.small` (1 vCPU / 2Gi) + preference `fedora` ile, `fedora` boot source'undan oluşturulmuştur.
+Tüm VM'ler instancetype `u1.small` (1 vCPU / 2Gi) + preference `fedora` ile, `fedora` boot source'undan oluşturulur. Dosyalardaki parametreler ortamınıza göre doldurulur:
+
+| Parametre | Anlamı | Lab testinde |
+|---|---|---|
+| `REPLACE_ME_NODE` | VM'in sabitleneceği node (`oc get nodes`) | 3 node'luk havuzdan biri |
+| `REPLACE_ME_NODE_LABEL` | Zorunlu node etiketi (node affinity) | 3 node'luk ikinci bir havuzun rol etiketi |
+| `REPLACE_ME_PREFERRED_NODE` | Bu etiketli node'lar içinde tercih edilen node | ikinci havuzdan bir node |
+| `REPLACE_ME_POOL_LABEL` | Anti-affinity testinin sınırlandırılacağı **3 node**'luk havuz etiketi | ilk havuzun rol etiketi |
 
 ```bash
-oc apply -f scheduling/vm-nodeselector.yaml -f scheduling/vm-node-affinity.yaml -f scheduling/vm-anti-affinity.yaml
+cd scheduling
+FILL='s#REPLACE_ME_NODE_LABEL#<etiket>#; s#REPLACE_ME_PREFERRED_NODE#<node>#; s#REPLACE_ME_POOL_LABEL#<havuz-etiketi>#; s#REPLACE_ME_NODE\b#<node>#'
+for f in vm-nodeselector.yaml vm-node-affinity.yaml vm-anti-affinity.yaml; do sed -E "$FILL" $f | oc apply -f -; done
 # web-1 Running olduktan sonra:
-oc apply -f scheduling/vm-affinity.yaml
+oc apply -f vm-affinity.yaml
 
 oc get vmi -n sekom-ocp-poc-virt -o custom-columns=VM:.metadata.name,PHASE:.status.phase,NODE:.status.nodeName
 ```
 
 | Dosya | Kural | Beklenen | ✅ Gerçek sonuç |
 |---|---|---|---|
-| `vm-nodeselector.yaml` | `nodeSelector: kubernetes.io/hostname=hpeworker02` | Sadece hpeworker02 | `sched-nodeselector` → **hpeworker02** |
-| `vm-node-affinity.yaml` | **required**: `node-role.kubernetes.io/qct` var; **preferred** (weight 100): `worker03` | qct node'larından biri, tercihen worker03 | `sched-node-affinity` → **worker03** |
-| `vm-anti-affinity.yaml` | 4 VM (`app=sekom-web`); required node affinity: `hpe` node'ları (3 adet); **required podAntiAffinity** (`topologyKey: kubernetes.io/hostname`) | 3 VM farklı node'larda, 4. VM yerleşemez | `web-1` → hpeworker01, `web-2` → hpeworker03, `web-3` → hpeworker02, **`web-4` → `ErrorUnschedulable`** |
-| `vm-affinity.yaml` | **required podAffinity**: `vm.kubevirt.io/name=web-1` ile aynı node | web-1'in node'u | `cache-1` → **hpeworker01** (web-1 ile aynı) |
+| `vm-nodeselector.yaml` | `nodeSelector: kubernetes.io/hostname=<node>` | Sadece o node | `sched-nodeselector` → **verilen node** (iki turda da) |
+| `vm-node-affinity.yaml` | **required**: `<etiket>` var; **preferred** (weight 100): `<node>` | Etiketli node'lardan biri, tercihen `<node>` | `sched-node-affinity` → **tercih edilen node** (iki turda da) |
+| `vm-anti-affinity.yaml` | 4 VM (`app=sekom-web`); required node affinity: 3 node'luk havuz; **required podAntiAffinity** (`topologyKey: kubernetes.io/hostname`) | 3 VM farklı node'larda, 4. VM yerleşemez | 3 VM havuzun üç farklı node'una dağıldı, **biri `ErrorUnschedulable`** (1. turda `web-4`, 2. turda `web-3` — hangisinin açıkta kalacağı rastgele) |
+| `vm-affinity.yaml` | **required podAffinity**: `vm.kubevirt.io/name=web-1` ile aynı node | web-1'in node'u | `cache-1` → **web-1 ile aynı node** (iki turda da) |
 
-✅ **Gerçek çıktı (`web-4` event'i):**
+✅ **Gerçek çıktı (yerleşemeyen VM'in event'i):**
 
 ```
 0/9 nodes are available: 3 node(s) didn't match Pod's node affinity/selector,
 3 node(s) didn't match pod anti-affinity rules, 3 node(s) had untolerated taint(s).
 ```
 
-(3 master: taint, 3 qct: node affinity dışı, 3 hpe: anti-affinity dolu.) Bu davranış **required** kuralın katı olduğunu gösterir. "Mümkünse ayır, değilse yine de çalıştır" isteniyorsa `preferredDuringSchedulingIgnoredDuringExecution` kullanılmalıdır.
+(3 master: taint, havuz dışındaki 3 node: node affinity dışı, havuzdaki 3 node: anti-affinity dolu.) Bu davranış **required** kuralın katı olduğunu gösterir. "Mümkünse ayır, değilse yine de çalıştır" isteniyorsa `preferredDuringSchedulingIgnoredDuringExecution` kullanılmalıdır.
 
-**Toleration (referans, uygulanmadı):** Bedrock'ta worker node'larında taint yok. Paylaşımlı cluster olduğu için test amaçlı taint eklenmedi. VM'leri adanmış (taint'li) node'lara koymak için:
+**Toleration (referans, uygulanmadı):** Lab ortamındaki worker node'larında taint yok. Paylaşımlı cluster olduğu için test amaçlı taint eklenmedi. VM'leri adanmış (taint'li) node'lara koymak için:
 
 ```yaml
 spec:
@@ -765,7 +821,7 @@ annotations:
   velero.io/csi-volumesnapshot-class_openshift-storage.rbd.csi.ceph.com: ocs-storagecluster-rbdplugin-snapclass
 ```
 
-> Velero normalde `velero.io/csi-volumesnapshot-class=true` etiketli VolumeSnapshotClass'ı arar. Bedrock'ta bu etiket yok. Paylaşımlı VolumeSnapshotClass'ı etiketlemek yerine annotation yöntemi kullanıldı; bu yöntem cluster geneline dokunmaz. Kalıcı kullanım için `oc label volumesnapshotclass ocs-storagecluster-rbdplugin-snapclass velero.io/csi-volumesnapshot-class=true` daha pratiktir.
+> Velero normalde `velero.io/csi-volumesnapshot-class=true` etiketli VolumeSnapshotClass'ı arar. Lab ortamında bu etiket yoktu. Paylaşımlı VolumeSnapshotClass'ı etiketlemek yerine annotation yöntemi kullanıldı; bu yöntem cluster geneline dokunmaz. Kalıcı kullanım için `oc label volumesnapshotclass ocs-storagecluster-rbdplugin-snapclass velero.io/csi-volumesnapshot-class=true` daha pratiktir.
 
 ```bash
 oc apply -f oadp/backup.yaml
@@ -799,7 +855,9 @@ virtualmachine.kubevirt.io/sekom-backup-vm   Running
 persistentvolumeclaim/sekom-backup-vm        Bound   30Gi   RWX   ocs-storagecluster-ceph-rbd-virtualization
 ```
 
-Restore **43 saniyede** tamamlandı ve VM kendiliğinden açıldı. Disk yeniden klonlanmadı, CSI snapshot'tan geri yüklendi.
+Restore **43 saniyede** tamamlandı ve VM kendiliğinden açıldı.
+
+✅ **İkinci test turu** (golden template'ten açılan VM ile): backup **27 sn** `Completed 85/85 csi=1/1 hooksAttempted=2`; namespace silindikten sonra restore **27 sn** `Completed 50/50` (13 zararsız uyarı); veri dosyasının SHA256'sı ve machine-id birebir aynı, httpd `active`. Namespace'ler arası klon izni olmadan VM yine `UnauthorizedDataVolumeCreate` ile bekledi; RBAC uygulanınca 42 sn'de açıldı. Disk yeniden klonlanmadı, CSI snapshot'tan geri yüklendi.
 
 **Veri doğrulama (VM içinde):**
 
@@ -822,8 +880,10 @@ SHA256 ve machine-id birebir aynı: aynı VM, verisiyle birlikte geri geldi.
 
 ## 12. Bilinen Sınırlamalar / Canlı Testte Görülenler
 
-- **DHCP ile IP çakışması (önemli):** VLAN 112'deki ilk denemede kurumsal DHCP, test VM'ine `10.134.112.179`'u verdi. Bu IP, başka bir VM'de (`default/rhel9-keycloak1`) **statik ikinci IP** olarak zaten tanımlıydı (`arping -D` başka bir MAC'ten cevap aldı; bastion'dan SSH başka bir sunucuya düştü). IP birkaç dakika içinde VM'den kaldırıldı, NIC de hot-unplug ile çıkarıldı. **Ders:** Statik IP'ler DHCP sunucusunda rezerve / hariç tutulmalıdır. Canlı ortamda VM'lere LAN IP'si verirken ya IPAM/DHCP ekibinden ayrılmış bir blok alınmalı ya da her IP kullanılmadan önce `arping -D` ile kontrol edilmelidir.
-- **Multus NIC otomatik DHCP:** Fedora/RHEL imajlarında NetworkManager yeni eklenen NIC'e kendiliğinden DHCP ile IP alır ("Wired connection 1"). Hotplug öncesinde bunun farkında olun.
+- **DHCP ile IP çakışması (önemli):** Kurumsal VLAN'daki ilk denemede DHCP, test VM'ine başka bir VM'de **statik ikinci IP (VIP)** olarak tanımlı bir adresi verdi (`arping -D` başka bir MAC'ten cevap aldı; dışarıdan SSH başka bir sunucuya düştü). İkinci turda verilen IP de o an kapalı olan başka bir VM'in adresiydi. İki durumda da IP hemen bırakıldı (bkz. 9.3–9.4). **Ders:** Statik IP'ler DHCP sunucusunda rezerve / hariç tutulmalıdır. Canlı ortamda VM'lere LAN IP'si verirken ya IPAM/DHCP ekibinden ayrılmış bir blok alınmalı ya da her IP kullanılmadan önce `arping -D` ile kontrol edilmelidir.
+- **Multus NIC otomatik DHCP:** Fedora/RHEL imajlarında NetworkManager yeni eklenen NIC'e kendiliğinden DHCP ile IP alır ("Wired connection 1"). Hotplug öncesinde `no-auto-default=*` ile kapatın (bkz. 9.3).
+- **Hotplug disk + SELinux snapshot hatası:** Yeni formatlanan diskin bağlama noktası etiketsiz kalırsa guest agent dosya sistemini donduramaz ve snapshot `Failed` olur; `restorecon -v <bağlama-noktası>` ile çözülür (bkz. 8).
+- **`oc get subscription` belirsizliği:** ACM kuruluysa `subscription` kısa adı ACM'in `subscriptions.apps.open-cluster-management.io` kaynağını getirir. OLM için `oc get subscriptions.operators.coreos.com` kullanın.
 - **Hotplug diskler SCSI'dır:** `/dev/sdX` olarak görünür, `virtio` değil (bkz. 6.1).
 - **`runStrategy: Always` + misafir içi `poweroff`:** VM yeniden başlatılır. Kalıcı kapatma için `virtctl stop` / Console **Stop** kullanın.
 - **`virtctl start` sonrası `oc wait vmi`:** VMI nesnesi birkaç saniye sonra oluşur. Hemen `oc wait vmi` çalıştırılırsa `NotFound` döner. `oc wait vm <ad> --for=condition=Ready` kullanın ya da kısa bir bekleme ekleyin.

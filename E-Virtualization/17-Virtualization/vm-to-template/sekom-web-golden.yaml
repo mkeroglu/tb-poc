@@ -60,14 +60,6 @@ objects:
                 secretName: ${SSH_KEY_SECRET}
             propagationMethod:
               noCloud: {}
-        affinity:
-          nodeAffinity:
-            preferredDuringSchedulingIgnoredDuringExecution:
-            - preference:
-                matchExpressions:
-                - key: node-role.kubernetes.io/hpe
-                  operator: Exists
-              weight: 50
         architecture: amd64
         domain:
           cpu:
