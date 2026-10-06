@@ -1,6 +1,6 @@
 # 18 — MTV ile VMware / OVA'dan Taşıma
 
-> [← 17.1 — Windows Boot Source](../17-Virtualization/windows/README.md) · [POC akışı](../../README.md)
+> [← 17.1 — Windows Boot Source](../17-Virtualization/windows/README.md) · [POC akışı](../../README.md) · [19 — NodeHealthCheck →](../19-NodeHealthCheck/README.md)
 
 Bu rehber, **Migration Toolkit for Virtualization (MTV)** ile mevcut sanallaştırma platformundaki (VMware vSphere, OVA, RHV, OpenStack) VM'lerin OpenShift Virtualization'a taşınmasını anlatır: provider tanımı, envanter, ağ/depolama haritaları, plan ve taşıma.
 
